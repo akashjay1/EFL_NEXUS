@@ -1,0 +1,119 @@
+function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Sheet1");
+    if (!sheet) {
+      sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    }
+    var data = JSON.parse(e.postData.contents);
+    
+    var offset = (data.type === "GDN") ? 0 : 4;
+    var lastRow = Math.max(sheet.getLastRow(), 1);
+    var nextRow = lastRow + 1;
+    
+    // Insert new record at the end of the sheet temporarily
+    var rowData = [[data.date, data.time, data.number, data.type_part]];
+    sheet.getRange(nextRow, offset + 1, 1, 4).setValues(rowData);
+    
+    // Sort this type's block in chronological order of Date and Time
+    sortBlockByDate(sheet, offset);
+    
+    return ContentService.createTextOutput(JSON.stringify({"status": "success"}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({"status": "error", "message": err.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Sheet1");
+    if (!sheet) {
+      sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    }
+    
+    // Automatically sort all records by date & time whenever data/counts are requested
+    sortAllRecords();
+    
+    var data = sheet.getDataRange().getValues();
+    var counts = {"GDN": 0, "GRN": 0};
+    
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][3]) counts["GDN"]++; // Column D (GDN Site/Type)
+      if (data[i][7]) counts["GRN"]++; // Column H (GRN Site/Type)
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify(counts))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({"GDN": 0, "GRN": 0, "error": err.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function formatSortKey(val) {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT", "yyyy-MM-dd HH:mm:ss");
+  }
+  return val.toString().trim();
+}
+
+function sortBlockByDate(sheet, offset) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  
+  var numRowsToCheck = lastRow - 1;
+  var range = sheet.getRange(2, offset + 1, numRowsToCheck, 4);
+  var values = range.getValues();
+  
+  var validRows = [];
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var hasData = row.some(function(cell) {
+      return cell !== "" && cell !== null && cell !== undefined;
+    });
+    if (hasData) {
+      validRows.push(row);
+    }
+  }
+  
+  if (validRows.length === 0) return;
+  
+  // Sort rows strictly in order of Date, then Time
+  validRows.sort(function(a, b) {
+    var dateA = formatSortKey(a[0]);
+    var dateB = formatSortKey(b[0]);
+    if (dateA < dateB) return -1;
+    if (dateA > dateB) return 1;
+    
+    var timeA = formatSortKey(a[1]);
+    var timeB = formatSortKey(b[1]);
+    if (timeA < timeB) return -1;
+    if (timeA > timeB) return 1;
+    
+    return 0;
+  });
+  
+  // Clear old block content
+  range.clearContent();
+  
+  // Write back sorted records starting at Row 2
+  sheet.getRange(2, offset + 1, validRows.length, 4).setValues(validRows);
+}
+
+function sortAllRecords() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Sheet1");
+  if (!sheet) {
+    sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+  }
+  sortBlockByDate(sheet, 0); // Sort GDN records (Cols A-D)
+  sortBlockByDate(sheet, 4); // Sort GRN records (Cols E-H)
+}
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Nexus Log')
+    .addItem('Sort All Records by Date', 'sortAllRecords')
+    .addToUi();
+}
