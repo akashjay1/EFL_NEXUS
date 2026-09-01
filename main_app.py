@@ -406,6 +406,9 @@ class MainApp:
         # Warm up heavy tool modules in the background right after startup
         self.root.after(150, self._start_background_warmup)
 
+        # Pre-instantiate Tool 4 in idle time so opening User Data Manager is instant without stutter
+        self.root.after(600, self._prewarm_tool4)
+
         # Silent update check 2 seconds after startup
         self.root.after(2000, lambda: self.check_for_updates(silent=True))
 
@@ -564,6 +567,14 @@ class MainApp:
                     __import__(mod)
                 except Exception:
                     pass
+
+            # Pre-warm efldatamanager data in background thread
+            try:
+                import efldatamanager
+                if hasattr(efldatamanager, "preload_data"):
+                    efldatamanager.preload_data()
+            except Exception:
+                pass
 
             # Automatically update local and remote records to date order on startup
             try:
@@ -1229,6 +1240,14 @@ class MainApp:
             self.tool3_error = traceback.format_exc()
             self.tool3_app = None
             self._show_tool_error(page, "Tool 3: Outlook Email Sender", self.tool3_error)
+
+    def _prewarm_tool4(self):
+        """Pre-instantiate Tool 4 during main launcher idle time to eliminate click lag and stutter."""
+        if self.tool4_app is None and self.tool4_error is None:
+            try:
+                self._ensure_tool4()
+            except Exception:
+                pass
 
     def _ensure_tool4(self):
         page = self.pages["tool4"]

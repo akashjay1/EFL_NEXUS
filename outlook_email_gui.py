@@ -68,6 +68,7 @@ except ImportError:
 
 try:
     from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, Alignment
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
@@ -371,6 +372,76 @@ class SentLogStore:
         self.config_store = config_store
         self.excel_path = excel_path
 
+    @staticmethod
+    def _normalize_date_str(val):
+        """Normalize date value/string to YYYY-MM-DD."""
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if not s:
+            return ""
+        import re
+        m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s)
+        if m:
+            month, day, year = int(m.group(1)), int(m.group(2)), m.group(3)
+            return f"{year}-{month:02d}-{day:02d}"
+        return s
+
+    @staticmethod
+    def _normalize_time_str(val):
+        """Normalize time value/string to HH:MM:SS."""
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if not s:
+            return ""
+        import re
+        m = re.match(r"^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$", s)
+        if m:
+            hour = int(m.group(1))
+            minute = int(m.group(2))
+            second = int(m.group(3)) if m.group(3) is not None else 0
+            return f"{hour:02d}:{minute:02d}:{second:02d}"
+        return s
+
+    @staticmethod
+    def _apply_sheet_formatting(ws):
+        """Apply Calibri 11, proper alignments, and number formats matching the screenshot."""
+        font_header = Font(name="Calibri", size=11, bold=True)
+        font_data = Font(name="Calibri", size=11)
+        align_right = Alignment(horizontal="right", vertical="center")
+        align_left = Alignment(horizontal="left", vertical="center")
+
+        # Header row (Row 1)
+        for col_idx in range(1, 9):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.font = font_header
+            if col_idx in (4, 8):
+                cell.alignment = align_left
+            else:
+                cell.alignment = align_right
+
+        # Data rows (Row 2+)
+        for row_idx in range(2, ws.max_row + 1):
+            for col_idx in range(1, 9):
+                cell = ws.cell(row=row_idx, column=col_idx)
+                cell.font = font_data
+                if col_idx in (1, 5):  # GDN Date, GRN Date
+                    cell.number_format = 'yyyy-mm-dd'
+                    cell.alignment = align_right
+                elif col_idx in (2, 6):  # GDN Time, GRN Time
+                    cell.number_format = 'hh:mm:ss'
+                    cell.alignment = align_right
+                elif col_idx in (3, 7):  # GDN Number, GRN Number
+                    cell.number_format = '@'
+                    cell.alignment = align_right
+                elif col_idx in (4, 8):  # GDN Type, GRN Type
+                    cell.number_format = '@'
+                    cell.alignment = align_left
+
+        for col, width in zip("ABCDEFGH", (14, 12, 16, 20, 14, 12, 16, 20)):
+            ws.column_dimensions[col].width = width
+
     def sort_local_records(self):
         if not OPENPYXL_AVAILABLE or not os.path.exists(self.excel_path):
             return
@@ -384,19 +455,19 @@ class SentLogStore:
                 if not row:
                     continue
                 if any(row[:4]):
-                    gdn_rows.append([
-                        str(row[0] if row[0] is not None else "").strip(),
-                        str(row[1] if row[1] is not None else "").strip(),
-                        str(row[2] if row[2] is not None else "").strip(),
-                        str(row[3] if row[3] is not None else "").strip(),
-                    ])
+                    d = self._normalize_date_str(row[0])
+                    t = self._normalize_time_str(row[1])
+                    num = str(row[2] if row[2] is not None else "").strip()
+                    tp = str(row[3] if row[3] is not None else "").strip()
+                    if d or t or num or tp:
+                        gdn_rows.append([d, t, num, tp])
                 if len(row) > 4 and any(row[4:8]):
-                    grn_rows.append([
-                        str(row[4] if row[4] is not None else "").strip(),
-                        str(row[5] if row[5] is not None else "").strip(),
-                        str(row[6] if row[6] is not None else "").strip(),
-                        str(row[7] if row[7] is not None else "").strip(),
-                    ])
+                    d = self._normalize_date_str(row[4])
+                    t = self._normalize_time_str(row[5])
+                    num = str(row[6] if row[6] is not None else "").strip()
+                    tp = str(row[7] if row[7] is not None else "").strip()
+                    if d or t or num or tp:
+                        grn_rows.append([d, t, num, tp])
 
             gdn_rows.sort(key=lambda r: (r[0], r[1]))
             grn_rows.sort(key=lambda r: (r[0], r[1]))
@@ -411,6 +482,7 @@ class SentLogStore:
                 grn_part = grn_rows[i] if i < len(grn_rows) else ["", "", "", ""]
                 ws.append(gdn_part + grn_part)
 
+            self._apply_sheet_formatting(ws)
             wb.save(self.excel_path)
         except Exception as e:
             print(f"Error sorting local sent_log.xlsx: {e}")
@@ -446,8 +518,6 @@ class SentLogStore:
                     "GDN Date", "GDN Time", "GDN Number", "GDN Type",
                     "GRN Date", "GRN Time", "GRN Number", "GRN Type"
                 ])
-                for col, width in zip("ABCDEFGH", (14, 12, 16, 20, 14, 12, 16, 20)):
-                    ws.column_dimensions[col].width = width
 
             gdn_rows = []
             grn_rows = []
@@ -455,21 +525,26 @@ class SentLogStore:
                 if not row:
                     continue
                 if any(row[:4]):
-                    gdn_rows.append([
-                        str(row[0] if row[0] is not None else "").strip(),
-                        str(row[1] if row[1] is not None else "").strip(),
-                        str(row[2] if row[2] is not None else "").strip(),
-                        str(row[3] if row[3] is not None else "").strip(),
-                    ])
+                    d = self._normalize_date_str(row[0])
+                    t = self._normalize_time_str(row[1])
+                    num = str(row[2] if row[2] is not None else "").strip()
+                    tp = str(row[3] if row[3] is not None else "").strip()
+                    if d or t or num or tp:
+                        gdn_rows.append([d, t, num, tp])
                 if len(row) > 4 and any(row[4:8]):
-                    grn_rows.append([
-                        str(row[4] if row[4] is not None else "").strip(),
-                        str(row[5] if row[5] is not None else "").strip(),
-                        str(row[6] if row[6] is not None else "").strip(),
-                        str(row[7] if row[7] is not None else "").strip(),
-                    ])
+                    d = self._normalize_date_str(row[4])
+                    t = self._normalize_time_str(row[5])
+                    num = str(row[6] if row[6] is not None else "").strip()
+                    tp = str(row[7] if row[7] is not None else "").strip()
+                    if d or t or num or tp:
+                        grn_rows.append([d, t, num, tp])
 
-            new_record = [date_str, time_str, number_part, type_part]
+            new_record = [
+                self._normalize_date_str(date_str),
+                self._normalize_time_str(time_str),
+                str(number_part or "").strip(),
+                str(type_part or "").strip()
+            ]
             if send_type == SEND_TYPE_GDN:
                 gdn_rows.append(new_record)
                 gdn_rows.sort(key=lambda r: (r[0], r[1]))
@@ -487,6 +562,7 @@ class SentLogStore:
                 grn_part = grn_rows[i] if i < len(grn_rows) else ["", "", "", ""]
                 ws.append(gdn_part + grn_part)
 
+            self._apply_sheet_formatting(ws)
             wb.save(self.excel_path)
         except Exception as e:
             print(f"Excel logging failed: {e}")
@@ -548,8 +624,8 @@ class SentLogStore:
                 if any(row[:4]) and str(row[0] or "").strip():
                     records.append({
                         "type": "GDN",
-                        "date": str(row[0] or "").strip(),
-                        "time": str(row[1] or "").strip(),
+                        "date": self._normalize_date_str(row[0]),
+                        "time": self._normalize_time_str(row[1]),
                         "number": str(row[2] or "").strip(),
                         "warehouse": str(row[3] or "").replace("GDN", "").strip().rstrip("-").strip() or "General"
                     })
@@ -557,8 +633,8 @@ class SentLogStore:
                 if len(row) > 4 and any(row[4:8]) and str(row[4] or "").strip():
                     records.append({
                         "type": "GRN",
-                        "date": str(row[4] or "").strip(),
-                        "time": str(row[5] or "").strip(),
+                        "date": self._normalize_date_str(row[4]),
+                        "time": self._normalize_time_str(row[5]),
                         "number": str(row[6] or "").strip(),
                         "warehouse": str(row[7] or "").replace("GRN", "").strip().rstrip("-").strip() or "General"
                     })

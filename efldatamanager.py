@@ -148,7 +148,12 @@ def set_remembered_user(username, remember=True):
 # ==========================================
 # GOOGLE SHEETS DATA ACCESS
 # ==========================================
-_sheets_lock = threading.Lock()
+# ==========================================
+# CACHE AND PERSISTENCE
+# ==========================================
+_sheets_lock = threading.RLock()
+_client_cache = None
+_spreadsheet_cache = None
 _sheet_cache = None
 _records_cache = None
 _sheet2_cache = None
@@ -160,6 +165,47 @@ _connection_status = False
 
 _count_cache = {}
 _count_cache_timestamp = {}
+
+CACHE_FILE = os.path.join(APP_PATH, ".efl_records_cache.json")
+
+def _save_local_disk_cache():
+    """Save in-memory records to local disk cache for instant startup loading."""
+    try:
+        data = {
+            "timestamp": datetime.now().timestamp(),
+            "sheet1": _records_cache or [],
+            "sheet2": _records2_cache or [],
+            "sheet3": _records3_cache or []
+        }
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print(f"Error saving local cache: {e}")
+
+def _load_local_disk_cache():
+    """Load records from local disk cache into memory in 0.001s."""
+    global _records_cache, _records2_cache, _records3_cache, _cache_timestamps
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            ts = data.get("timestamp", datetime.now().timestamp())
+            if _records_cache is None and "sheet1" in data:
+                _records_cache = data.get("sheet1", [])
+                _cache_timestamps["sheet1"] = ts
+            if _records2_cache is None and "sheet2" in data:
+                _records2_cache = data.get("sheet2", [])
+                _cache_timestamps[SHEET2_NAME] = ts
+            if _records3_cache is None and "sheet3" in data:
+                _records3_cache = data.get("sheet3", [])
+                _cache_timestamps[SHEET3_NAME] = ts
+            return True
+    except Exception as e:
+        print(f"Error loading local cache: {e}")
+    return False
+
+# Attempt instant load of disk cache on module import
+_load_local_disk_cache()
 
 def get_resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller."""
@@ -182,41 +228,42 @@ def get_credentials_path():
     return get_resource_path('credentials.json')
 
 def connect_to_sheets(force_refresh=False, sheet_name=None):
-    global _sheet_cache, _sheet2_cache, _sheet3_cache, _connection_status
+    """Connect to Google Sheets with client and spreadsheet caching."""
+    global _client_cache, _spreadsheet_cache, _sheet_cache, _sheet2_cache, _sheet3_cache, _connection_status
     with _sheets_lock:
         try:
-            if sheet_name == SHEET3_NAME:
-                if _sheet3_cache and not force_refresh:
+            if not force_refresh:
+                if sheet_name == SHEET3_NAME and _sheet3_cache:
                     _connection_status = True
                     return _sheet3_cache, "Success"
-            elif sheet_name == SHEET2_NAME:
-                if _sheet2_cache and not force_refresh:
+                elif sheet_name == SHEET2_NAME and _sheet2_cache:
                     _connection_status = True
                     return _sheet2_cache, "Success"
-            else:
-                if _sheet_cache and not force_refresh:
+                elif (sheet_name is None or sheet_name == "Sheet1") and _sheet_cache:
                     _connection_status = True
                     return _sheet_cache, "Success"
 
-            creds_path = get_credentials_path()
-            if not os.path.exists(creds_path):
-                _connection_status = False
-                return None, "credentials.json not found"
+            if not _spreadsheet_cache or force_refresh:
+                creds_path = get_credentials_path()
+                if not os.path.exists(creds_path):
+                    _connection_status = False
+                    return None, "credentials.json not found"
 
-            scope = [
-                'https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/spreadsheets',
-                'https://www.googleapis.com/auth/drive.file'
-            ]
-            creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
-            client = gspread.authorize(creds)
-            spreadsheet = client.open_by_key(SHEET_ID)
+                scope = [
+                    'https://spreadsheets.google.com/feeds',
+                    'https://www.googleapis.com/auth/spreadsheets',
+                    'https://www.googleapis.com/auth/drive.file'
+                ]
+                creds = ServiceAccountCredentials.from_json_keyfile_name(creds_path, scope)
+                _client_cache = gspread.authorize(creds)
+                _spreadsheet_cache = _client_cache.open_by_key(SHEET_ID)
+
+            spreadsheet = _spreadsheet_cache
 
             if sheet_name == SHEET3_NAME:
                 try:
                     sheet = spreadsheet.worksheet(SHEET3_NAME)
                 except Exception:
-                    # If Sheet3 doesn't exist yet, create it with headers
                     sheet = spreadsheet.add_worksheet(title=SHEET3_NAME, rows=100, cols=10)
                     sheet.append_row(['Timestamp', 'User ID', 'Password Hash'])
                 _sheet3_cache = sheet
@@ -233,34 +280,90 @@ def connect_to_sheets(force_refresh=False, sheet_name=None):
             _connection_status = False
             return None, str(e)
 
+def fetch_all_sheets_batch():
+    """Fetch Sheet1, Sheet2, Sheet3 in a SINGLE batch API request (~0.7s)."""
+    global _records_cache, _records2_cache, _records3_cache, _cache_timestamps, _connection_status
+    with _sheets_lock:
+        try:
+            sheet, msg = connect_to_sheets()
+            if not sheet:
+                _connection_status = False
+                return False, msg
+
+            spreadsheet = sheet.spreadsheet
+            res = spreadsheet.values_batch_get(["Sheet1", SHEET2_NAME, SHEET3_NAME])
+            value_ranges = res.get("valueRanges", [])
+
+            def to_records(vr):
+                vals = vr.get("values", [])
+                if not vals or len(vals) < 2:
+                    return []
+                hdrs = [str(h).strip() for h in vals[0]]
+                out = []
+                for r in vals[1:]:
+                    pad = list(r) + [""] * (len(hdrs) - len(r))
+                    out.append({hdrs[i]: pad[i] for i in range(len(hdrs)) if hdrs[i]})
+                return out
+
+            now_ts = datetime.now().timestamp()
+            if len(value_ranges) > 0:
+                _records_cache = to_records(value_ranges[0])
+                _cache_timestamps["sheet1"] = now_ts
+            if len(value_ranges) > 1:
+                _records2_cache = to_records(value_ranges[1])
+                _cache_timestamps[SHEET2_NAME] = now_ts
+            if len(value_ranges) > 2:
+                _records3_cache = to_records(value_ranges[2])
+                _cache_timestamps[SHEET3_NAME] = now_ts
+
+            _connection_status = True
+            _save_local_disk_cache()
+            _count_cache.clear()
+
+            # Sync user database in memory from Sheet3 records without extra requests
+            sync_users_from_records(_records3_cache)
+
+            return True, "Success"
+        except Exception as e:
+            _connection_status = False
+            return False, str(e)
+
+def preload_data():
+    """Load local cache from disk and begin background batch sheet fetch."""
+    _load_local_disk_cache()
+    threading.Thread(target=fetch_all_sheets_batch, daemon=True).start()
+
 def get_cached_records(force_refresh=False, sheet_name=None):
     global _records_cache, _records2_cache, _records3_cache, _cache_timestamps
 
     cache_key = sheet_name if sheet_name in (SHEET2_NAME, SHEET3_NAME) else "sheet1"
     current_time = datetime.now().timestamp()
 
-    if force_refresh:
+    if not force_refresh:
         if sheet_name == SHEET3_NAME:
-            _records3_cache = None
+            if _records3_cache is not None and cache_key in _cache_timestamps:
+                if current_time - _cache_timestamps[cache_key] < 60:
+                    return _records3_cache
         elif sheet_name == SHEET2_NAME:
-            _records2_cache = None
+            if _records2_cache is not None and cache_key in _cache_timestamps:
+                if current_time - _cache_timestamps[cache_key] < 60:
+                    return _records2_cache
         else:
-            _records_cache = None
-        _cache_timestamps.pop(cache_key, None)
+            if _records_cache is not None and cache_key in _cache_timestamps:
+                if current_time - _cache_timestamps[cache_key] < 60:
+                    return _records_cache
 
-    if sheet_name == SHEET3_NAME:
-        if _records3_cache is not None and cache_key in _cache_timestamps:
-            if current_time - _cache_timestamps[cache_key] < 10:
-                return _records3_cache
-    elif sheet_name == SHEET2_NAME:
-        if _records2_cache is not None and cache_key in _cache_timestamps:
-            if current_time - _cache_timestamps[cache_key] < 10:
-                return _records2_cache
-    else:
-        if _records_cache is not None and cache_key in _cache_timestamps:
-            if current_time - _cache_timestamps[cache_key] < 10:
-                return _records_cache
+    # If force_refresh or not in memory, use fast batch fetch
+    success, _ = fetch_all_sheets_batch()
+    if success:
+        if sheet_name == SHEET3_NAME:
+            return _records3_cache
+        elif sheet_name == SHEET2_NAME:
+            return _records2_cache
+        else:
+            return _records_cache
 
+    # Fallback to single sheet fetch if batch fails
     sheet, msg = connect_to_sheets(force_refresh, sheet_name)
     if not sheet:
         return None
@@ -274,6 +377,7 @@ def get_cached_records(force_refresh=False, sheet_name=None):
             _records2_cache = records
         else:
             _records_cache = records
+        _save_local_disk_cache()
         return records
     except Exception as e:
         print(f"Error fetching records ({sheet_name}): {e}")
@@ -343,26 +447,15 @@ def save_user_to_sheet3(username, password_or_hash):
         print(f"Error saving user hash to Sheet3: {e}")
         return False, str(e)
 
-def sync_users_with_sheet3():
-    """Sync user hashes between Sheet3 and local database.
-    Sheet3 is the remote source of truth:
-    - Any user in Sheet3 is added/updated in local storage with secure hash.
-    - Any user removed/deleted from Sheet3 is automatically purged from local storage.
-    """
+def sync_users_from_records(records, sheet=None):
+    """Sync user hashes between Sheet3 records and local database without extra network calls."""
+    if records is None:
+        return False, "No records provided"
     try:
-        sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET3_NAME)
-        if not sheet:
-            return False, msg
-
-        records = get_cached_records(force_refresh=True, sheet_name=SHEET3_NAME)
-        if records is None:
-            return False, "Could not read records from Sheet3"
-
         db = load_user_db()
         users = db.setdefault("users", {})
         changes = False
 
-        # Extract all valid users from Sheet3
         sheet_valid_users = {}
         for i, record in enumerate(records, start=2):
             r_user = str(record.get('User ID', record.get('Username', record.get('User', '')))).strip()
@@ -372,16 +465,15 @@ def sync_users_with_sheet3():
             if not r_user:
                 continue
 
-            # Verify if password in Sheet3 is already a hash or plain text
             if r_pass and is_sha256_hash(r_pass):
                 pwd_hash = r_pass.lower()
             elif r_pass:
-                # Convert plaintext to hash and sanitize in Sheet3
                 pwd_hash = hash_password(r_pass)
-                try:
-                    sheet.update(range_name=f"C{i}", values=[[pwd_hash]])
-                except Exception:
-                    pass
+                if sheet:
+                    try:
+                        sheet.update(range_name=f"C{i}", values=[[pwd_hash]])
+                    except Exception:
+                        pass
             else:
                 continue
 
@@ -417,7 +509,23 @@ def sync_users_with_sheet3():
         if changes:
             save_user_db(db)
 
-        return True, "Users synchronized with Sheet3"
+        return True, "Users synchronized"
+    except Exception as e:
+        print(f"Error syncing users from records: {e}")
+        return False, str(e)
+
+def sync_users_with_sheet3():
+    """Sync user hashes between Sheet3 and local database."""
+    try:
+        sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET3_NAME)
+        if not sheet:
+            return False, msg
+
+        records = get_cached_records(force_refresh=False, sheet_name=SHEET3_NAME)
+        if records is None:
+            records = sheet.get_all_records()
+
+        return sync_users_from_records(records, sheet)
     except Exception as e:
         print(f"Error syncing users with Sheet3: {e}")
         return False, str(e)
@@ -425,6 +533,59 @@ def sync_users_with_sheet3():
 # ==========================================
 # COUNT AND TASK OPERATIONS
 # ==========================================
+def calculate_all_task_counts(user_id, target_date=None):
+    """Calculate all task counts for user_id on target_date in a single fast pass (<1ms)."""
+    target_str = target_date.strftime("%d-%m-%Y") if target_date else datetime.now().strftime("%d-%m-%Y")
+    norm_user = user_id.strip().lower()
+
+    counts_map = {
+        "GDN Reconciliation:": 0,
+        "GRN Reconciliation:": 0,
+        "GDN Creation:": 0,
+        "GRN Creation:": 0,
+        "Load Plan or Asn:": 0,
+        "Load Transfer:": [0, 0],
+        "Load Audit:": [0, 0],
+        "Shipping:": [0, 0],
+        "Allocation/Backorders:": [0, 0]
+    }
+
+    records1 = _records_cache or []
+    for r in records1:
+        u = str(r.get('User ID', '')).strip().lower()
+        if u != norm_user:
+            continue
+        ts = str(r.get('Timestamp', ''))
+        if target_str not in ts:
+            continue
+        t = str(r.get('Task', '')).strip()
+        if t in counts_map and isinstance(counts_map[t], int):
+            counts_map[t] += 1
+
+    records2 = _records2_cache or []
+    for r in records2:
+        u = str(r.get('User ID', '')).strip().lower()
+        if u != norm_user:
+            continue
+        ts = str(r.get('Timestamp', ''))
+        if target_str not in ts:
+            continue
+        t = str(r.get('Task', '')).strip()
+        if t in counts_map and isinstance(counts_map[t], list):
+            load_str = str(r.get('Load ID', '')).strip()
+            lp_str = str(r.get('LP Count', '')).strip()
+            if load_str:
+                try:
+                    counts_map[t][0] += int(load_str)
+                except ValueError:
+                    pass
+            if lp_str:
+                try:
+                    counts_map[t][1] += int(lp_str)
+                except ValueError:
+                    pass
+
+    return counts_map
 def get_task_daily_count(user_id, task_name, target_date=None):
     target_str = target_date.strftime("%d-%m-%Y") if target_date else datetime.now().strftime("%d-%m-%Y")
     cache_key = f"{user_id}_{task_name}_{target_str}"
@@ -608,7 +769,19 @@ def save_to_sheet(task, job_id, job_status, user_id):
         data_row = [timestamp, task, job_id, job_status, user_id]
 
         sheet.append_row(data_row)
-        invalidate_cache("sheet1")
+        global _records_cache
+        if _records_cache is not None:
+            _records_cache.append({
+                'Timestamp': timestamp,
+                'Task': task,
+                'Job ID': job_id,
+                'Job Status': job_status,
+                'User ID': user_id
+            })
+            _save_local_disk_cache()
+            _count_cache.clear()
+        else:
+            invalidate_cache("sheet1")
         return True, "Saved successfully!", None
     except Exception as e:
         print(f"Error saving: {e}")
@@ -616,7 +789,7 @@ def save_to_sheet(task, job_id, job_status, user_id):
 
 def save_to_sheet2(task, job_id, load_id, lp_count, user_id):
     try:
-        sheet, msg = connect_to_sheets(force_refresh=True, sheet_name=SHEET2_NAME)
+        sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET2_NAME)
         if not sheet:
             return False, msg, None
         is_duplicate, existing_user = check_duplicate_sheet2(task, job_id, load_id, lp_count)
@@ -627,7 +800,20 @@ def save_to_sheet2(task, job_id, load_id, lp_count, user_id):
         data_row = [timestamp, task, job_id, load_id, lp_count, user_id]
 
         sheet.append_row(data_row)
-        invalidate_cache(SHEET2_NAME)
+        global _records2_cache
+        if _records2_cache is not None:
+            _records2_cache.append({
+                'Timestamp': timestamp,
+                'Task': task,
+                'Job ID': job_id,
+                'Load ID': load_id,
+                'LP Count': lp_count,
+                'User ID': user_id
+            })
+            _save_local_disk_cache()
+            _count_cache.clear()
+        else:
+            invalidate_cache(SHEET2_NAME)
         return True, "Saved successfully!", None
     except Exception as e:
         print(f"Error saving to Sheet2: {e}")
@@ -638,11 +824,12 @@ def delete_from_sheet(task, job_id, job_status, user_id):
         sheet, msg = connect_to_sheets()
         if not sheet:
             return False, "Connection failed: " + str(msg)
-        records = get_cached_records(force_refresh=True)
+        records = get_cached_records(force_refresh=False)
         if not records:
             return False, "No data found to delete"
 
         row_to_delete = None
+        record_to_remove = None
         for i, record in enumerate(records, start=2):
             record_task = str(record.get('Task', '')).strip()
             record_job_id = str(record.get('Job ID', '')).strip()
@@ -654,6 +841,7 @@ def delete_from_sheet(task, job_id, job_status, user_id):
                 record_job_status.lower() == job_status.strip().lower() and
                 record_user_id.lower() == user_id.strip().lower()):
                 row_to_delete = i
+                record_to_remove = record
                 break
 
         if row_to_delete is None:
@@ -664,7 +852,13 @@ def delete_from_sheet(task, job_id, job_status, user_id):
         except AttributeError:
             sheet.delete_row(row_to_delete)
 
-        invalidate_cache("sheet1")
+        global _records_cache
+        if _records_cache and record_to_remove in _records_cache:
+            _records_cache.remove(record_to_remove)
+            _save_local_disk_cache()
+            _count_cache.clear()
+        else:
+            invalidate_cache("sheet1")
         return True, "Deleted successfully"
     except Exception as e:
         print(f"Error deleting: {e}")
@@ -672,14 +866,15 @@ def delete_from_sheet(task, job_id, job_status, user_id):
 
 def delete_from_sheet2(task, job_id, user_id):
     try:
-        sheet, msg = connect_to_sheets(force_refresh=True, sheet_name=SHEET2_NAME)
+        sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET2_NAME)
         if not sheet:
             return False, "Connection failed: " + str(msg)
-        records = get_cached_records(force_refresh=True, sheet_name=SHEET2_NAME)
+        records = get_cached_records(force_refresh=False, sheet_name=SHEET2_NAME)
         if not records:
             return False, "No data found to delete"
 
         row_to_delete = None
+        record_to_remove = None
         for i, record in enumerate(records, start=2):
             record_task = str(record.get('Task', '')).strip()
             record_job_id = str(record.get('Job ID', '')).strip()
@@ -689,6 +884,7 @@ def delete_from_sheet2(task, job_id, user_id):
                 record_job_id.lower() == job_id.strip().lower() and
                 record_user_id.lower() == user_id.strip().lower()):
                 row_to_delete = i
+                record_to_remove = record
                 break
 
         if row_to_delete is None:
@@ -699,7 +895,13 @@ def delete_from_sheet2(task, job_id, user_id):
         except AttributeError:
             sheet.delete_row(row_to_delete)
 
-        invalidate_cache(SHEET2_NAME)
+        global _records2_cache
+        if _records2_cache and record_to_remove in _records2_cache:
+            _records2_cache.remove(record_to_remove)
+            _save_local_disk_cache()
+            _count_cache.clear()
+        else:
+            invalidate_cache(SHEET2_NAME)
         return True, "Deleted successfully"
     except Exception as e:
         print(f"Error deleting from Sheet2: {e}")
@@ -760,10 +962,8 @@ class EFLApp:
         self.status_dot = None
         self.status_label = None
         self.connection_status = False
-        self.is_loading = False
-
-        # Background sync users from Sheet3 on start
-        threading.Thread(target=self.initial_user_sync, daemon=True).start()
+        # Ensure local disk cache is in memory for 0s startup
+        _load_local_disk_cache()
 
         # Check for remembered session
         remembered = get_remembered_user()
@@ -772,6 +972,8 @@ class EFLApp:
             self.show_dashboard()
         else:
             self.show_login_screen()
+            # Only sync users in background if on login screen
+            threading.Thread(target=self.initial_user_sync, daemon=True).start()
 
     def initial_user_sync(self):
         """Silently sync user hashes from Sheet3 in the background on startup and reflect additions/removals"""
@@ -1180,9 +1382,6 @@ class EFLApp:
         self.is_edit_mode_enabled = True
         self.is_first_load = True
 
-        # Invalidate count cache for new user
-        invalidate_cache()
-
         # Build UI Components
         self.setup_header(self.content_frame)
         self.setup_top_user_date_row(self.content_frame)
@@ -1191,32 +1390,30 @@ class EFLApp:
         self.setup_footer(self.content_frame)
 
         # Reset inputs
-        self.root.after(50, self.reset_all_inputs)
+        self.root.after(20, self.reset_all_inputs)
 
-        # Load data in background
-        self.root.after(100, self.load_data_background)
+        # If cache is available, display counts immediately!
+        if _records_cache:
+            self.update_status(True)
+            self.update_all_counts()
+
+        # Load fresh data in background via fast single-batch API call
+        self.root.after(50, self.load_data_background)
 
         # Start status check
-        self.root.after(2000, self.check_connection_status)
+        self.root.after(5000, self.check_connection_status)
 
     def load_data_background(self):
-        """Load data in background thread for faster startup and sync Sheet3 secure user hashes"""
+        """Load data in background thread using fast single-batch API call"""
         def load():
-            connected = False
-            try:
-                sheet, msg = connect_to_sheets()
-                if sheet:
-                    get_cached_records(force_refresh=True)
-                    get_cached_records(force_refresh=True, sheet_name=SHEET2_NAME)
-                    get_cached_records(force_refresh=True, sheet_name=SHEET3_NAME)
-                    # Sync remote user hashes from Sheet3 (purges any removed users)
-                    sync_users_with_sheet3()
-                    connected = True
-                    self.root.after(0, lambda: [self.show_message("Connected!", "success"), self.update_status(True)])
+            success, msg = fetch_all_sheets_batch()
+            if success:
+                self.root.after(0, lambda: [self.show_message("Connected!", "success"), self.update_status(True)])
+            else:
+                if _records_cache:
+                    self.root.after(0, lambda: [self.show_message("Working Offline (Cached)", "info"), self.update_status(True)])
                 else:
                     self.root.after(0, lambda: [self.show_message(f"Connection Failed: {msg}", "error"), self.update_status(False)])
-            except Exception as e:
-                self.root.after(0, lambda: [self.show_message(f"Connection Error: {e}", "error"), self.update_status(False)])
 
             self.root.after(0, self.update_all_counts)
             self.root.after(0, self.start_auto_refresh)
@@ -1640,15 +1837,16 @@ class EFLApp:
         target_date = self.selected_date
 
         def fetch_and_update():
+            counts_map = calculate_all_task_counts(user_id, target_date)
             counts = []
             for task_name in self.all_task_names:
-                if task_name in ["Load Transfer:", "Load Audit:", "Shipping:", "Allocation/Backorders:"]:
-                    load_sum = get_task_daily_load_sum(user_id, task_name, target_date)
-                    lp_sum = get_task_daily_lp_sum(user_id, task_name, target_date)
-                    counts.append(f"{load_sum}-{lp_sum}")
+                val = counts_map.get(task_name)
+                if isinstance(val, list):
+                    counts.append(f"{val[0]}-{val[1]}")
+                elif val is not None:
+                    counts.append(f"{val}")
                 else:
-                    count = get_task_daily_count(user_id, task_name, target_date)
-                    counts.append(f"{count}")
+                    counts.append("0")
 
             def apply_counts():
                 for i, count_text in enumerate(counts):

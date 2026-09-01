@@ -10,12 +10,18 @@ function doPost(e) {
     var lastRow = Math.max(sheet.getLastRow(), 1);
     var nextRow = lastRow + 1;
     
+    var normDate = normalizeDate(data.date);
+    var normTime = normalizeTime(data.time);
+    var normNum = (data.number !== null && data.number !== undefined) ? data.number.toString().trim() : "";
+    var normType = (data.type_part !== null && data.type_part !== undefined) ? data.type_part.toString().trim() : "";
+    
     // Insert new record at the end of the sheet temporarily
-    var rowData = [[data.date, data.time, data.number, data.type_part]];
+    var rowData = [[normDate, normTime, normNum, normType]];
     sheet.getRange(nextRow, offset + 1, 1, 4).setValues(rowData);
     
-    // Sort this type's block in chronological order of Date and Time
+    // Sort and format this type's block in chronological order
     sortBlockByDate(sheet, offset);
+    formatHeader(sheet);
     
     return ContentService.createTextOutput(JSON.stringify({"status": "success"}))
       .setMimeType(ContentService.MimeType.JSON);
@@ -32,7 +38,7 @@ function doGet(e) {
       sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
     }
     
-    // Automatically sort all records by date & time whenever data/counts are requested
+    // Automatically sort and format all records by date & time (Calibri 11, yyyy-MM-dd)
     sortAllRecords();
     
     var data = sheet.getDataRange().getValues();
@@ -51,12 +57,96 @@ function doGet(e) {
   }
 }
 
+function normalizeDate(val) {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT", "yyyy-MM-dd");
+  }
+  var str = val.toString().trim();
+  // Check if format is M/D/YYYY or MM/DD/YYYY and convert to yyyy-MM-dd
+  var m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    var mm = ("0" + m[1]).slice(-2);
+    var dd = ("0" + m[2]).slice(-2);
+    var yyyy = m[3];
+    return yyyy + "-" + mm + "-" + dd;
+  }
+  return str;
+}
+
+function normalizeTime(val) {
+  if (val === null || val === undefined) return "";
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT", "HH:mm:ss");
+  }
+  var str = val.toString().trim();
+  var m = str.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
+  if (m) {
+    var hh = ("0" + m[1]).slice(-2);
+    var mm = ("0" + m[2]).slice(-2);
+    var ss = m[3] ? ("0" + m[3]).slice(-2) : "00";
+    return hh + ":" + mm + ":" + ss;
+  }
+  return str;
+}
+
 function formatSortKey(val) {
   if (val === null || val === undefined) return "";
   if (val instanceof Date) {
     return Utilities.formatDate(val, Session.getScriptTimeZone() || "GMT", "yyyy-MM-dd HH:mm:ss");
   }
-  return val.toString().trim();
+  var str = val.toString().trim();
+  var m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    var mm = ("0" + m[1]).slice(-2);
+    var dd = ("0" + m[2]).slice(-2);
+    var yyyy = m[3];
+    return yyyy + "-" + mm + "-" + dd;
+  }
+  return str;
+}
+
+function applyBlockFormatting(sheet, offset, numRows) {
+  if (numRows < 1) return;
+  var range = sheet.getRange(2, offset + 1, numRows, 4);
+  range.setFontFamily("Calibri");
+  range.setFontSize(11);
+  range.setVerticalAlignment("middle");
+
+  // Date column (Col offset + 1): yyyy-MM-dd, right-aligned
+  var dateCol = sheet.getRange(2, offset + 1, numRows, 1);
+  dateCol.setNumberFormat("yyyy-MM-dd");
+  dateCol.setHorizontalAlignment("right");
+
+  // Time column (Col offset + 2): HH:mm:ss, right-aligned
+  var timeCol = sheet.getRange(2, offset + 2, numRows, 1);
+  timeCol.setNumberFormat("HH:mm:ss");
+  timeCol.setHorizontalAlignment("right");
+
+  // Number column (Col offset + 3): text format, right-aligned
+  var numCol = sheet.getRange(2, offset + 3, numRows, 1);
+  numCol.setNumberFormat("@");
+  numCol.setHorizontalAlignment("right");
+
+  // Type column (Col offset + 4): text format, left-aligned
+  var typeCol = sheet.getRange(2, offset + 4, numRows, 1);
+  typeCol.setNumberFormat("@");
+  typeCol.setHorizontalAlignment("left");
+}
+
+function formatHeader(sheet) {
+  var headerRange = sheet.getRange(1, 1, 1, 8);
+  headerRange.setFontFamily("Calibri");
+  headerRange.setFontSize(11);
+  headerRange.setFontWeight("bold");
+  headerRange.setVerticalAlignment("middle");
+
+  // Columns A-C right-aligned, D left-aligned
+  sheet.getRange(1, 1, 1, 3).setHorizontalAlignment("right");
+  sheet.getRange(1, 4, 1, 1).setHorizontalAlignment("left");
+  // Columns E-G right-aligned, H left-aligned
+  sheet.getRange(1, 5, 1, 3).setHorizontalAlignment("right");
+  sheet.getRange(1, 8, 1, 1).setHorizontalAlignment("left");
 }
 
 function sortBlockByDate(sheet, offset) {
@@ -74,7 +164,13 @@ function sortBlockByDate(sheet, offset) {
       return cell !== "" && cell !== null && cell !== undefined;
     });
     if (hasData) {
-      validRows.push(row);
+      var d = normalizeDate(row[0]);
+      var t = normalizeTime(row[1]);
+      var n = (row[2] !== null && row[2] !== undefined) ? row[2].toString().trim() : "";
+      var tp = (row[3] !== null && row[3] !== undefined) ? row[3].toString().trim() : "";
+      if (d || t || n || tp) {
+        validRows.push([d, t, n, tp]);
+      }
     }
   }
   
@@ -100,6 +196,9 @@ function sortBlockByDate(sheet, offset) {
   
   // Write back sorted records starting at Row 2
   sheet.getRange(2, offset + 1, validRows.length, 4).setValues(validRows);
+  
+  // Apply Calibri 11 and formatting
+  applyBlockFormatting(sheet, offset, validRows.length);
 }
 
 function sortAllRecords() {
@@ -107,6 +206,7 @@ function sortAllRecords() {
   if (!sheet) {
     sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
   }
+  formatHeader(sheet);
   sortBlockByDate(sheet, 0); // Sort GDN records (Cols A-D)
   sortBlockByDate(sheet, 4); // Sort GRN records (Cols E-H)
 }
@@ -114,6 +214,6 @@ function sortAllRecords() {
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
   ui.createMenu('Nexus Log')
-    .addItem('Sort All Records by Date', 'sortAllRecords')
+    .addItem('Sort & Format All Records by Date (Calibri 11)', 'sortAllRecords')
     .addToUi();
 }
