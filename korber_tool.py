@@ -8,9 +8,13 @@ RUN:
     python korber_app.py
 """
 
+import os
+import re
+import sys
 import threading
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import messagebox, ttk
 
 from selenium.webdriver.common.by import By
@@ -22,6 +26,7 @@ from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
     NoSuchElementException,
+    JavascriptException,
 )
 
 import korber_login_bot as bot  # reuses open_new_browser() and login() from the file we already built
@@ -29,10 +34,16 @@ import korber_login_bot as bot  # reuses open_new_browser() and login() from the
 # How many extra attempts a single step gets before it's treated as a real
 # failure, and how long to pause between attempts. Bump STEP_RETRIES up (or
 # STEP_RETRY_DELAY) if the system is reliably slow enough that 2 retries
-# isn't cutting it.
-STEP_RETRIES = 2
+STEP_RETRIES = 10
 STEP_RETRY_DELAY = 2  # seconds
-RETRYABLE_EXCEPTIONS = (TimeoutException, StaleElementReferenceException)
+RETRYABLE_EXCEPTIONS = (
+    TimeoutException,
+    StaleElementReferenceException,
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    NoSuchElementException,
+    JavascriptException,
+)
 
 # The "Quantity discrepancy found ... No changes were applied" system error
 # can show up mid-flow. The fix is to click the page's own refresh button
@@ -41,6 +52,14 @@ RETRYABLE_EXCEPTIONS = (TimeoutException, StaleElementReferenceException)
 # and reporting it as a normal failure instead of looping forever.
 DISCREPANCY_MAX_REFRESH_RETRIES = 5
 DISCREPANCY_REFRESH_RETRY_DELAY = 2  # seconds
+
+# After clicking 'Add GDN', the next page can take a while to show the
+# 'ADD GDN DETAIL' button -- clicking the page's own refresh button
+# repeatedly until it appears is the known fix. These control how many
+# times we click refresh (and how long we wait between clicks) before
+# giving up and reporting it as a normal failure.
+ADD_GDN_DETAIL_MAX_REFRESH_RETRIES = 20
+ADD_GDN_DETAIL_REFRESH_RETRY_DELAY = 2  # seconds
 
 
 def play_completion_beep():
@@ -83,9 +102,22 @@ def play_error_beep():
 
 
 class KorberApp:
-    def __init__(self, root):
+    def __init__(self, root, container=None, standalone=True, profile_name="default"):
+        """root: the Tk instance (used for dialogs / after() / etc).
+        container: the frame this tool's UI should be built into. Defaults
+        to root itself, which reproduces the original standalone behavior.
+        standalone: when False (i.e. embedded in the multi-tool shell),
+        window-level chrome (title, size, position, background) is left
+        alone since the shell owns it.
+        profile_name: which isolated Chrome profile this instance's
+        browser sessions use. Two KorberApp instances running at the same
+        time (e.g. Lane A / Lane B) MUST use different profile_name values
+        -- otherwise their browsers fight over the same locked Chrome
+        profile folder and crash on startup."""
         self.root = root
         self.driver = None
+        self.profile_name = profile_name
+        target = container if container is not None else root
 
         # State kept around so a failed run can be resumed with "Retry from
         # here" instead of starting the whole browser session over.
@@ -94,23 +126,40 @@ class KorberApp:
         self._current_doc_type = None
         self._failed_step_index = None  # index into _current_steps of the step that last failed
 
-        root.title("Körber Automation")
-        root.geometry("480x920")
-        root.minsize(460, 780)
-        root.configure(bg="#f4f6f8")
+        if standalone:
+            root.title("Körber Automation")
+
+            # Center the window on the display. update_idletasks() forces
+            # Tk to process the geometry request first so winfo_width/height
+            # below report the size we just set (900x900) rather than a
+            # stale default size.
+            WINDOW_W, WINDOW_H = 900, 900
+            root.geometry(f"{WINDOW_W}x{WINDOW_H}")
+            root.update_idletasks()
+            screen_w = root.winfo_screenwidth()
+            screen_h = root.winfo_screenheight()
+            pos_x = (screen_w // 2) - (WINDOW_W // 2)
+            pos_y = (screen_h // 2) - (WINDOW_H // 2)
+            root.geometry(f"{WINDOW_W}x{WINDOW_H}+{pos_x}+{pos_y}")
+
+            root.minsize(700, 780)
+            root.configure(bg="#faf8f2")
+            try:
+                root.state('zoomed')
+            except Exception:
+                pass
 
         # --- Theming ---
-        # 'clam' is the most reliably customizable stock ttk theme across
-        # platforms (unlike the native Windows theme, its colors/borders
-        # actually respond to style overrides), so it's the base for a
-        # cleaner look without adding a third-party dependency.
-        ACCENT = "#1c3f60"       # Körber-ish dark navy/blue
-        ACCENT_HOVER = "#274d73"
-        SUCCESS = "#1f8a4c"
-        DANGER = "#b3392c"
-        BG = "#f4f6f8"
+        # Aurora Borealis & Obsidian Theme
+        ACCENT = "#0b1420"
+        ACCENT_HOVER = "#162e4c"
+        AURORA_CYAN = "#00e5ff"
+        AURORA_MINT = "#49cf9e"
+        SUCCESS = "#10b981"
+        DANGER = "#dc2626"
+        BG = "#faf8f2"
         CARD_BG = "#ffffff"
-        MUTED = "#6b7280"
+        MUTED = "#64748b"
 
         style = ttk.Style(root)
         style.theme_use("clam")
@@ -119,54 +168,90 @@ class KorberApp:
         style.configure("Card.TFrame", background=CARD_BG)
         style.configure("Header.TFrame", background=ACCENT)
 
-        style.configure("TLabel", background=BG, foreground="#1f2937", font=("Segoe UI", 10))
-        style.configure("Card.TLabel", background=CARD_BG, foreground="#1f2937", font=("Segoe UI", 10))
+        style.configure("TLabel", background=BG, foreground="#0f172a", font=("Segoe UI", 10))
+        style.configure("Card.TLabel", background=CARD_BG, foreground="#0f172a", font=("Segoe UI", 10))
         style.configure("Header.TLabel", background=ACCENT, foreground="#ffffff", font=("Segoe UI", 15, "bold"))
-        style.configure("HeaderSub.TLabel", background=ACCENT, foreground="#cbd5e1", font=("Segoe UI", 9))
+        style.configure("HeaderSub.TLabel", background=ACCENT, foreground="#94a3b8", font=("Segoe UI", 9))
         style.configure("SectionTitle.TLabel", background=BG, foreground=ACCENT, font=("Segoe UI", 11, "bold"))
-        style.configure("Status.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9), wraplength=380)
+        style.configure("Status.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 9), wraplength=800)
 
         style.configure("TEntry", padding=6, fieldbackground="#ffffff")
         style.configure("TCombobox", padding=6)
 
         style.configure(
-            "Primary.TButton", background=ACCENT, foreground="#ffffff",
+            "Primary.TButton", background="#0d1b2a", foreground="#ffffff",
             font=("Segoe UI", 10, "bold"), padding=10, borderwidth=0
         )
         style.map("Primary.TButton",
-                  background=[("active", ACCENT_HOVER), ("disabled", "#9aa5b1")],
-                  foreground=[("disabled", "#e5e7eb")])
+                  background=[("active", ACCENT_HOVER), ("disabled", "#94a3b8")],
+                  foreground=[("active", AURORA_CYAN), ("disabled", "#e2e8f0")])
 
         style.configure(
-            "Secondary.TButton", background="#e5e7eb", foreground="#1f2937",
-            font=("Segoe UI", 10), padding=9, borderwidth=0
+            "Secondary.TButton", background="#e2e8f0", foreground="#0f172a",
+            font=("Segoe UI", 10, "bold"), padding=9, borderwidth=0
         )
-        style.map("Secondary.TButton", background=[("active", "#d1d5db")])
+        style.map("Secondary.TButton", background=[("active", "#cbd5e1")])
+
+        style.configure(
+            "Danger.TButton", background="#dc2626", foreground="#ffffff",
+            font=("Segoe UI", 10, "bold"), padding=9, borderwidth=0
+        )
+        style.map("Danger.TButton", background=[("active", "#b91c1c")])
 
         style.configure("TNotebook", background=BG, borderwidth=0)
         style.configure(
-            "TNotebook.Tab", background="#e5e7eb", foreground="#374151",
+            "TNotebook.Tab", background="#e2e8f0", foreground="#334155",
             font=("Segoe UI", 10, "bold"), padding=(18, 8)
         )
         style.map("TNotebook.Tab",
-                  background=[("selected", CARD_BG)],
-                  foreground=[("selected", ACCENT)])
+                  background=[("selected", "#0d1b2a")],
+                  foreground=[("selected", AURORA_CYAN)])
 
-        style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor="#e5e7eb", borderwidth=0)
+        style.configure("Horizontal.TProgressbar", background=AURORA_CYAN, troughcolor="#e2e8f0", borderwidth=0)
 
         self.status_var = tk.StringVar(value="Fill in the details, then choose GDN or GRN")
 
         # --- Header banner ---
-        header = ttk.Frame(root, style="Header.TFrame")
+        header = ttk.Frame(target, style="Header.TFrame")
         header.pack(fill="x")
-        ttk.Label(header, text="Körber Automation", style="Header.TLabel").pack(
-            anchor="w", padx=20, pady=(16, 0)
+
+        header_top_row = ttk.Frame(header, style="Header.TFrame")
+        header_top_row.pack(fill="x", padx=20, pady=(16, 0))
+
+        ttk.Label(header_top_row, text="Körber Automation", style="Header.TLabel").pack(side="left")
+
+        # --- Small header buttons (top right) ---
+        HEADER_BTN_BG = "#162e4c"
+        HEADER_BTN_BG_HOVER = "#1f3f66"
+
+        def _make_header_button(parent, text, command):
+            btn = tk.Label(
+                parent, text=text, bg=HEADER_BTN_BG, fg="#ffffff",
+                font=("Segoe UI", 8, "bold"), cursor="hand2",
+                padx=8, pady=4,
+            )
+            btn.bind("<Button-1>", lambda e: command())
+            btn.bind("<Enter>", lambda e: btn.config(bg=HEADER_BTN_BG_HOVER))
+            btn.bind("<Leave>", lambda e: btn.config(bg=HEADER_BTN_BG))
+            return btn
+
+        # Added in reverse (each packed to the right of the previous), so
+        # the visible left-to-right order reads: Restart, Terminate, About.
+        _make_header_button(header_top_row, "About", self.show_about).pack(
+            side="right"
         )
+        _make_header_button(
+            header_top_row, "Terminate", self.terminate_session
+        ).pack(side="right", padx=(0, 6))
+        _make_header_button(
+            header_top_row, "Restart", self.terminate_and_restart
+        ).pack(side="right", padx=(0, 6))
+
         ttk.Label(header, text="GDN / GRN creation bot", style="HeaderSub.TLabel").pack(
             anchor="w", padx=20, pady=(0, 14)
         )
 
-        body = ttk.Frame(root, style="TFrame")
+        body = ttk.Frame(target, style="TFrame")
         body.pack(fill="both", expand=True, padx=18, pady=16)
 
         # --- Tabs: GDN / GRN ---
@@ -183,7 +268,7 @@ class KorberApp:
 
         ttk.Label(gdn_tab, text="Warehouse ID", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
         self.warehouse_entry = ttk.Combobox(
-            gdn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL"]
+            gdn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "LPIC", "INMM01"]
         )
         self.warehouse_entry.grid(row=0, column=1, sticky="ew", pady=(0, 12), padx=(10, 0))
 
@@ -225,7 +310,7 @@ class KorberApp:
 
         ttk.Label(grn_tab, text="Warehouse ID", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
         self.grn_warehouse_entry = ttk.Combobox(
-            grn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL"]
+            grn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "INMM01"]
         )
         self.grn_warehouse_entry.grid(row=0, column=1, sticky="ew", pady=(0, 12), padx=(10, 0))
 
@@ -332,6 +417,10 @@ class KorberApp:
         self.progress = ttk.Progressbar(status_card, mode="indeterminate", style="Horizontal.TProgressbar")
         self.progress.pack(fill="x", pady=(8, 0))
 
+        # Restart App / Terminate Session now live in the "⋮ More Options"
+        # menu at the top right of the header instead of a standalone
+        # button here.
+
     def _start_progress(self):
         self.progress.start(12)
 
@@ -351,6 +440,159 @@ class KorberApp:
     def set_status(self, text):
         self.status_var.set(text)
         self.root.update_idletasks()
+
+    def _capture_diagnostics(self, label):
+        """Saves a screenshot + full page HTML snapshot of the current
+        browser state, tagged with a timestamp and the given label, for
+        EVERY issue detected during a run -- not just the final
+        unrecoverable failure. This includes issues the app goes on to
+        recover from automatically (retries, the Create GRN system
+        errors, a missing ADD GDN DETAIL button, etc.), so there's a full
+        record of everything that went wrong, even when the run as a
+        whole eventually succeeds.
+
+        Saved into a 'diagnostics' subfolder next to this script (created
+        on first use) rather than dumped alongside the .py file, so a long
+        run's worth of captures stays out of the way. Falls back to the
+        current working directory if that folder can't be created for
+        some reason (e.g. permissions).
+
+        Each call gets its own timestamped filename (rather than the
+        fixed 'korber_failure_screenshot.png' names used before), so
+        multiple issues in one run don't overwrite each other.
+
+        Returns (screenshot_path, html_path); either can be None if that
+        particular save failed (e.g. driver already dead)."""
+        if self.driver is None:
+            return None, None
+
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        safe_label = re.sub(r"[^A-Za-z0-9_-]+", "_", label).strip("_") or "issue"
+
+        if getattr(sys, "frozen", False):
+            _diag_base = Path(sys.executable).resolve().parent
+        else:
+            _diag_base = Path(__file__).resolve().parent
+        diagnostics_dir = _diag_base / "diagnostics"
+        try:
+            diagnostics_dir.mkdir(exist_ok=True)
+        except Exception:
+            diagnostics_dir = Path(".")  # fall back to the working directory if it can't be created
+
+        base_path = diagnostics_dir / f"korber_issue_{timestamp}_{safe_label}"
+
+        screenshot_path = None
+        try:
+            screenshot_path = str(base_path.with_suffix(".png"))
+            self.driver.save_screenshot(screenshot_path)
+        except Exception:
+            screenshot_path = None
+
+        html_path = None
+        try:
+            html_path = str(base_path.with_suffix(".html"))
+            with open(html_path, "w", encoding="utf-8") as f:
+                f.write(self.driver.page_source)
+        except Exception:
+            html_path = None
+
+        return screenshot_path, html_path
+
+    def terminate_and_restart(self):
+        """The 'nuclear option' for when something's stuck in a way normal
+        retries can't fix (orphaned chromedriver, a hung Selenium call, a
+        page that's wedged, etc.): kills the current browser session
+        outright and restarts the whole app as a brand-new process.
+
+        Confirms first since it's destructive -- any queue item currently
+        running is abandoned, not paused. Restarting via os.execv (rather
+        than just clearing self.driver) replaces this process with a
+        fresh instance of itself, so every bit of app state resets to a
+        clean slate: no leftover threads, no stale queue state, nothing
+        carried over."""
+        if not messagebox.askyesno(
+            "Terminate & Restart",
+            "This will close the browser and restart the app completely.\n\n"
+            "Any queue item currently running will be stopped, not paused. "
+            "Continue?",
+        ):
+            return
+
+        self.set_status("Terminating browser session...")
+
+        if self.driver is not None:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass  # driver may already be dead/unresponsive -- restart anyway
+            self.driver = None
+
+        self.set_status("Restarting app...")
+
+        # Replaces this process with a fresh instance of itself -- the
+        # cleanest way to guarantee a truly clean slate (every thread,
+        # queue item, and bit of in-memory state), not just the driver.
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def terminate_session(self):
+        """The lighter option next to Restart App: closes the current
+        browser session but leaves the app itself running -- no process
+        restart, no loss of whatever's typed into the fields or sitting
+        in the queue.
+
+        Nothing special has to happen to make a new browser open again
+        afterwards: run_flow()'s first step always calls
+        bot.open_new_browser() unconditionally, and run_queue()'s worker
+        opens a new one whenever self.driver is None -- exactly the state
+        this leaves things in. So the very next click on Create GDN /
+        Create GRN / Run Queue just starts a fresh session, same as if
+        the app had just been launched.
+
+        Confirms first since it's still disruptive to anything in
+        progress -- any queue item currently running or still waiting is
+        stopped, not paused, same as Restart App. Queued/Running items
+        are flagged with stop_requested here so that if a queue worker
+        thread is still alive, it notices on its own and marks them
+        'Stopped' cleanly instead of trying to use a browser that's about
+        to be gone."""
+        if not messagebox.askyesno(
+            "Terminate Session",
+            "This will close the current browser session. The app stays "
+            "open -- no restart.\n\n"
+            "Any queue item currently running or still queued will be "
+            "stopped, not paused. Afterwards, just click Create GDN, "
+            "Create GRN, or Run Queue to start a new browser session. "
+            "Continue?",
+        ):
+            return
+
+        self.set_status("Terminating browser session...")
+
+        for item in self.queue:
+            if item["status"] in ("Queued", "Running"):
+                item["stop_requested"] = True
+
+        if self.driver is not None:
+            try:
+                self.driver.quit()
+            except Exception:
+                pass  # driver may already be dead/unresponsive -- clear it anyway
+            self.driver = None
+
+        self.set_status(
+            "Browser session terminated — click Create GDN, Create GRN, "
+            "or Run Queue to start a new one"
+        )
+
+    def show_about(self):
+        """Shows a simple info popup with app/developer credit. Purely
+        informational -- no state changes, no confirmation needed."""
+        messagebox.showinfo(
+            "About",
+            "Körber Automation Bot\n\n"
+            "Built with ☕ by the 3PL EFL CSS Team\n"
+            "Automating GDN/GRN creation, one click at a time.",
+        )
 
     def run_flow(self, doc_type: str):
         if doc_type == "GDN":
@@ -511,7 +753,7 @@ class KorberApp:
         if self.driver is None:
             try:
                 self.set_status("Opening browser...")
-                self.driver = bot.open_new_browser(headless=False)
+                self.driver = bot.open_new_browser(headless=False, profile_name=self.profile_name)
             except Exception as e:
                 self.set_status("Failed to open browser")
                 messagebox.showerror("Failed", f"Could not start the queue: {e}")
@@ -586,12 +828,8 @@ class KorberApp:
             except Exception as e:
                 self._update_queue_item_status(item, "Failed")
                 fail_count += 1
-                try:
-                    if self.driver is not None:
-                        safe_gp = "".join(c for c in item["gate_pass_number"] if c.isalnum()) or "item"
-                        self.driver.save_screenshot(f"korber_failure_{item['doc_type']}_{safe_gp}.png")
-                except Exception:
-                    pass
+                safe_gp = "".join(c for c in item["gate_pass_number"] if c.isalnum()) or "item"
+                self._capture_diagnostics(f"queue_{item['doc_type']}_{safe_gp}")
                 continue  # keep going with the rest of the queue
 
         self.set_status(f"Queue finished — {success_count} succeeded, {fail_count} failed, {stopped_count} stopped")
@@ -619,7 +857,7 @@ class KorberApp:
         GDN's multi-step flow), so this stays short until that's specified."""
 
         def opening_browser():
-            self.driver = bot.open_new_browser(headless=False)
+            self.driver = bot.open_new_browser(headless=False, profile_name=self.profile_name)
 
         def logging_in():
             bot.login(self.driver)
@@ -644,7 +882,7 @@ class KorberApp:
             self._resolve_quantity_discrepancy_after_create_grn()
 
         def clicking_grn_details():
-            click_grn_details_button(self.driver, timeout=30)
+            click_grn_details_button(self.driver, timeout=10)
 
         def clicking_send_grn():
             found = click_send_grn_button(self.driver)
@@ -695,7 +933,7 @@ class KorberApp:
         browser session over."""
 
         def opening_browser():
-            self.driver = bot.open_new_browser(headless=False)
+            self.driver = bot.open_new_browser(headless=False, profile_name=self.profile_name)
 
         def logging_in():
             bot.login(self.driver)
@@ -754,6 +992,7 @@ class KorberApp:
             wait_for_insert_result(self.driver, old_insert_link=ctx.get("insert_link"))
 
         def clicking_add_gdn_detail_step():
+            self._wait_for_add_gdn_detail_button()
             click_add_gdn_detail(self.driver)
 
         def clicking_add_all_step():
@@ -776,7 +1015,7 @@ class KorberApp:
                         last_exc = e
                         self.set_status(f"{label} click didn't register yet, retrying...")
                         time.sleep(1.5)
-                raise last_exc
+                
 
             for i in range(2):
                 self.set_status(f"Clicking Back ({i + 1}/2)...")
@@ -834,7 +1073,13 @@ class KorberApp:
 
         Before every attempt, waits out the app's processing spinner if
         it's showing (self.driver is None only for the very first step,
-        "opening browser", which hasn't created a driver yet)."""
+        "opening browser", which hasn't created a driver yet).
+
+        Captures a screenshot + page HTML on EVERY retryable exception,
+        not just the one that finally fails for good (that final one is
+        also captured separately, in _report_error) -- so there's a
+        record of every issue hit along the way, even ones that
+        eventually got resolved by a retry."""
         last_exc = None
         for attempt in range(retries + 1):
             if self.driver is not None:
@@ -844,10 +1089,11 @@ class KorberApp:
                 return
             except RETRYABLE_EXCEPTIONS as e:
                 last_exc = e
+                self._capture_diagnostics(f"retry_{getattr(func, '__name__', 'step')}")
                 if attempt < retries:
                     self.set_status(f"Slow response, retrying... (attempt {attempt + 2}/{retries + 1})")
                     time.sleep(delay)
-        raise last_exc
+        
 
     def _run_flow_worker(self, doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number):
         ctx = {}
@@ -909,18 +1155,36 @@ class KorberApp:
         raise a Selenium exception on their own, so this is an explicit
         check rather than something _run_step_with_retry would catch.
 
-        If one's there: plays the error beep, clicks the page's own
-        refresh button, and keeps checking/refreshing until the 'GRN
-        Details' button becomes available (success) -- not just until the
+        Actively WAITS for one of two outcomes rather than checking
+        instantly: the page takes a moment to either populate the
+        <ul class="page-messages"> error banner or make 'GRN Details'
+        available, so an immediate check right after the click was firing
+        too early and always seeing "no error" -- letting the flow move
+        straight on to the GRN Details step even when the error was about
+        to appear a beat later.
+
+        If the error's there: plays the error beep, captures a
+        screenshot + page HTML (via _capture_diagnostics), clicks the
+        page's own refresh button, and keeps checking/refreshing until
+        'GRN Details' becomes available (success) -- not just until the
         error text disappears, since the two aren't necessarily the same
         moment. Keeps this up for as long as an error keeps reappearing,
         up to DISCREPANCY_MAX_REFRESH_RETRIES refreshes, then raises so it
         bubbles up like any other step failure (shows the normal 'Retry
         from here' dialog instead of looping forever)."""
-        if not check_for_quantity_discrepancy_error(self.driver):
-            return  # no known system error this time -- nothing to do
+        settle_wait = WebDriverWait(self.driver, 10)
+        try:
+            settle_wait.until(
+                lambda d: is_grn_details_button_available(d) or check_for_quantity_discrepancy_error(d)
+            )
+        except TimeoutException:
+            return  # neither showed up in time -- let the normal step timeout/retry handle it
+
+        if is_grn_details_button_available(self.driver):
+            return  # succeeded normally -- nothing to resolve
 
         play_error_beep()
+        self._capture_diagnostics("create_grn_system_error")
         self.set_status("System error detected — refreshing page...")
 
         for attempt in range(DISCREPANCY_MAX_REFRESH_RETRIES):
@@ -930,6 +1194,13 @@ class KorberApp:
                 pass  # if the refresh button can't be found/clicked, just wait and check again
             time.sleep(DISCREPANCY_REFRESH_RETRY_DELAY)
             wait_for_loading_to_disappear(self.driver)
+
+            try:
+                settle_wait.until(
+                    lambda d: is_grn_details_button_available(d) or not check_for_quantity_discrepancy_error(d)
+                )
+            except TimeoutException:
+                pass  # still showing the error after the settle wait -- fall through to the checks below
 
             if is_grn_details_button_available(self.driver):
                 self.set_status("GRN Details button available — continuing...")
@@ -950,13 +1221,62 @@ class KorberApp:
             f"'Create GRN @ GatePass' system error persisted after {DISCREPANCY_MAX_REFRESH_RETRIES} refresh attempts"
         )
 
+    def _wait_for_add_gdn_detail_button(self):
+        """After clicking 'Add GDN', the next page can take a while to
+        show the 'ADD GDN DETAIL' button. If it's not there yet, this
+        captures a screenshot + page HTML (via _capture_diagnostics),
+        clicks the page's own refresh button (NOT the browser's), and
+        checks again, repeating until the button appears -- up to
+        ADD_GDN_DETAIL_MAX_REFRESH_RETRIES times -- before raising so it
+        bubbles up like any other step failure (shows the normal 'Retry
+        from here' dialog instead of refreshing forever)."""
+        wait_for_loading_to_disappear(self.driver)
+
+        if is_add_gdn_detail_button_available(self.driver):
+            return  # already there -- nothing to do
+
+        self.set_status("ADD GDN DETAIL button not showing yet — refreshing page...")
+        self._capture_diagnostics("add_gdn_detail_missing")
+
+        for attempt in range(ADD_GDN_DETAIL_MAX_REFRESH_RETRIES):
+            try:
+                click_refresh_page_button(self.driver)
+            except Exception:
+                pass  # if the refresh button can't be found/clicked, just wait and check again
+            time.sleep(ADD_GDN_DETAIL_REFRESH_RETRY_DELAY)
+            wait_for_loading_to_disappear(self.driver)
+
+            if is_add_gdn_detail_button_available(self.driver):
+                self.set_status("ADD GDN DETAIL button available — continuing...")
+                return
+
+            self.set_status(
+                f"Still no ADD GDN DETAIL button, refreshing again... "
+                f"(attempt {attempt + 2}/{ADD_GDN_DETAIL_MAX_REFRESH_RETRIES})"
+            )
+
+        raise Exception(
+            f"ADD GDN DETAIL button did not appear after {ADD_GDN_DETAIL_MAX_REFRESH_RETRIES} refresh attempts"
+        )
+
     def _cancel_after_failure(self):
         self._current_steps = None
         self._current_ctx = None
         self._failed_step_index = None
         self._stop_progress()
-        self.gdn_btn.config(state=tk.NORMAL)
-        self.grn_btn.config(state=tk.NORMAL)
+        for btn in (
+            getattr(self, "gdn_btn", None),
+            getattr(self, "grn_btn", None),
+            getattr(self, "gdn_queue_btn", None),
+            getattr(self, "grn_queue_btn", None),
+            getattr(self, "run_queue_btn", None),
+            getattr(self, "clear_queue_btn", None),
+        ):
+            if btn:
+                try:
+                    btn.config(state=tk.NORMAL)
+                except Exception:
+                    pass
         self.set_status("Cancelled after failure — fill in details and try again")
 
     def _report_error(self, step, e):
@@ -967,20 +1287,7 @@ class KorberApp:
         err_type = type(e).__name__
         err_msg = str(e).strip().splitlines()[0] if str(e).strip() else "(no message provided)"
 
-        screenshot_path = None
-        html_path = None
-        if self.driver is not None:
-            try:
-                screenshot_path = "korber_failure_screenshot.png"
-                self.driver.save_screenshot(screenshot_path)
-            except Exception:
-                pass
-            try:
-                html_path = "korber_failure_page.html"
-                with open(html_path, "w", encoding="utf-8") as f:
-                    f.write(self.driver.page_source)
-            except Exception:
-                pass
+        screenshot_path, html_path = self._capture_diagnostics(f"final_{step}")
 
         details = f"Failed during step: {step}\n\nException type: {err_type}\nMessage: {err_msg}"
         details += f"\n\n(Already retried {STEP_RETRIES} extra time(s) automatically before giving up.)"
@@ -1159,20 +1466,19 @@ def set_kendo_dropdown_value(driver, select_element, code):
         var widget = $select.data('kendoDropDownList');
         if (!widget) { throw 'Kendo widget not initialized on this element'; }
 
-        var code = arguments[1];
+        var rawCode = arguments[1];
+        var code = (rawCode ? String(rawCode) : '').trim().toUpperCase();
         var match = null;
         $select.find('option').each(function() {
-            var v = this.value;
-            if (v === code) {
+            var v = (this.value ? String(this.value) : '').trim();
+            var vUpper = v.toUpperCase();
+            if (vUpper === code) {
                 match = v;
                 return false;  // break out of jQuery.each
             }
             // Handle "CODE - Full Name" / "CODE-Full Name" style options
-            // (separator spacing isn't consistent across every dropdown on
-            // this app), while avoiding a false match on a longer code that
-            // merely starts with the same letters (e.g. "EG" vs "EGDC").
-            if (v.indexOf(code) === 0) {
-                var next = v.charAt(code.length);
+            if (vUpper.indexOf(code) === 0) {
+                var next = vUpper.charAt(code.length);
                 if (next === '' || next === ' ' || next === '-') {
                     match = v;
                     return false;
@@ -1180,7 +1486,7 @@ def set_kendo_dropdown_value(driver, select_element, code):
             }
         });
         if (match === null) {
-            throw 'No matching option found for code: ' + code;
+            throw 'No matching option found for code: ' + rawCode;
         }
 
         widget.value(match);
@@ -1194,34 +1500,7 @@ def set_kendo_dropdown_value(driver, select_element, code):
 def get_field_cell(driver, label_text: str):
     """Finds the <hj-field-cell> wrapping a field by its visible label text.
     Works for any field on this form (Warehouse ID, Client Code, etc.) since
-    they all share the same hj-field-cell / hj-field-label structure.
-
-    IMPORTANT #1: this is a knockout/kendo SPA where the previous page's
-    elements sometimes linger in the DOM (hidden) instead of being removed
-    when a new page loads. That means more than one <hj-field-cell> can
-    match the same label at once -- an old, hidden one from the page we
-    just left, and the new, visible one on the current page. Using
-    presence_of_element_located() alone would happily return whichever one
-    comes first in the HTML, which can silently be the stale/hidden one --
-    the fields then get "filled in" on a page you can't see, which looks
-    like nothing happened. So we explicitly wait for and return the first
-    match that is actually visible/displayed.
-
-    IMPORTANT #2: label casing is NOT consistent across pages for the same
-    field -- confirmed from a failure page dump that the first page renders
-    "Client Code" (title case) while the "Add Goods Delivery Note" detail
-    page renders "client code" (all lowercase) for that same field. A
-    case-sensitive text() match will silently find nothing and time out on
-    pages that use different casing, so we compare case-insensitively via
-    XPath's translate().
-
-    IMPORTANT #3: some required fields render their label with a leading
-    '*' fused into the SAME span as the text (e.g. "*Delivery To"), not as
-    a separate element -- confirmed from a screenshot of the live page. An
-    exact match against "delivery to" would never match "*delivery to", so
-    we also strip a leading '*' from the label text via translate() before
-    comparing.
-    """
+    they all share the same hj-field-cell / hj-field-label structure."""
     wait = WebDriverWait(driver, 20)
     label_lower = label_text.lower()
     xpath = (
@@ -1242,14 +1521,16 @@ def get_field_cell(driver, label_text: str):
 
 def capture_gdn_number(driver):
     """Reads the auto-generated GDN number (e.g. 'GDN0000010209') from the
-    'GDN' field on the detail page -- this value is assigned by the system
-    and is different every run, so we can't hardcode it anywhere. We read
-    it here and hold onto it so we can later find and click the matching
-    row in a results list (the row shows this same number as its link
-    text, confirmed by the user)."""
+    'GDN' field on the detail page -- waits until the field is non-empty."""
+    wait = WebDriverWait(driver, 15)
     gdn_cell = get_field_cell(driver, "GDN")
     gdn_input = gdn_cell.find_element(By.CSS_SELECTOR, "input.k-textbox")
-    return gdn_input.get_attribute("value").strip()
+
+    def _get_val(d):
+        v = (gdn_input.get_attribute("value") or "").strip()
+        return v if v else False
+
+    return wait.until(_get_val)
 
 
 def fill_gdn_form(driver, warehouse_id: str, client_code: str, gate_pass_number: str):
@@ -1324,15 +1605,51 @@ def set_grid_page_size(driver, size: str):
 
 def set_page_size(driver, size: str):
     """Sets the grid's 'rows per page' dropdown (options: 5/10/15/20/25/50/100).
-    No unique ID or label on this one, but the specific combination of
-    option values is distinctive enough on this page to find it reliably."""
-    wait = WebDriverWait(driver, 20)
-    xpath = (
-        "//select[@data-role='dropdownlist']"
-        "[option[@value='5'] and option[@value='10'] and option[@value='100']]"
+
+    Strategy (three-level fallback so GRN and GDN grids are both covered):
+    1. XPath lookup for a select whose options include both '5' and '100'
+       (the standard Kendo page-size fingerprint on most pages).
+    2. JS fingerprint scan via set_grid_page_size() which expects the full
+       5/10/15/20/25/50/100 set exactly.
+    3. Broad JS fallback: find any select[data-role='dropdownlist'] that has
+       a '100' option, regardless of what the other options are -- covers
+       GRN result grids whose option set differs from the GDN grid's."""
+    try:
+        wait = WebDriverWait(driver, 10)
+        xpath = (
+            "//select[@data-role='dropdownlist']"
+            "[option[@value='5'] and option[@value='10'] and option[@value='100']]"
+        )
+        page_size_select = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
+        set_kendo_dropdown_value(driver, page_size_select, size)
+        return
+    except Exception:
+        pass
+
+    try:
+        set_grid_page_size(driver, size)
+        return
+    except Exception:
+        pass
+
+    # Broad fallback: any Kendo dropdown select that exposes a '100' option.
+    driver.execute_script(
+        """
+        var target = null;
+        document.querySelectorAll("select[data-role='dropdownlist']").forEach(function(sel) {
+            var values = Array.prototype.map.call(sel.options, function(o) { return o.value; });
+            if (values.indexOf('100') !== -1) {
+                target = sel;
+            }
+        });
+        if (!target) { throw 'Page size dropdown not found (no select with a 100 option)'; }
+        var widget = jQuery(target).data('kendoDropDownList');
+        if (!widget) { throw 'Kendo widget not initialized on page size dropdown'; }
+        widget.value(arguments[0]);
+        widget.trigger('change');
+        """,
+        size,
     )
-    page_size_select = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
-    set_kendo_dropdown_value(driver, page_size_select, size)
 
 
 def click_query_button(driver):
@@ -1573,7 +1890,10 @@ def wait_for_report(driver, title_text, timeout=30):
 
     def _visible_report_iframe(d):
         frames = [
-            f for f in d.find_elements(By.CSS_SELECTOR, "iframe[src*='ReportViewer.aspx']")
+            f for f in d.find_elements(
+                By.XPATH,
+                "//iframe[contains(@src, 'ReportViewer') or contains(@src, 'Report') or contains(@id, 'report') or contains(@id, 'Report')]"
+            )
             if f.is_displayed()
         ]
         return frames[-1] if frames else False
@@ -1691,35 +2011,31 @@ def click_insert_button(driver):
 
 def wait_for_insert_result(driver, old_insert_link=None, timeout=20):
     """Waits for the page that appears after clicking Insert to actually
-    finish loading before we try to click 'ADD GDN DETAIL' on it.
+    finish loading, by waiting for the old Insert <a> to go stale
+    (removed/replaced in the DOM) -- same reasoning as
+    wait_for_query_results() / wait_for_add_gdn_page().
 
-    Same reasoning as wait_for_query_results() / wait_for_add_gdn_page():
-    this is a knockout/kendo SPA, so we wait for the old Insert <a> to go
-    stale (removed/replaced in the DOM), then confirm the 'ADD GDN DETAIL'
-    link itself is present as a secondary check."""
+    Deliberately does NOT also wait for the 'ADD GDN DETAIL' link here:
+    when SHIPPING PENDING occurs, that link never appears, and a plain
+    wait.until(presence_of(...)) would just time out with no way to
+    refresh and recover. Checking for (and refreshing until) that link is
+    handled separately by
+    KorberApp._wait_for_add_gdn_detail_button(), which runs right after
+    this as its own step -- this function's job is only to confirm the
+    page actually navigated."""
     wait = WebDriverWait(driver, timeout)
 
     if old_insert_link is not None:
         wait.until(EC.staleness_of(old_insert_link))
 
-    wait.until(
-        EC.presence_of_element_located(
-            (By.XPATH, "//span[normalize-space(text())='ADD GDN DETAIL']/ancestor::a")
-        )
-    )
-
 
 def click_add_gdn_detail(driver):
-    """Clicks the 'ADD GDN DETAIL' link on the page shown after Insert
-    succeeds. Its data-hj-test-id ('hj-link') is a generic value shared by
-    many links on this app, so we locate it by its visible label text
-    instead, then click the ancestor <a data-bind="click: ..."> that
-    actually holds the knockout binding (same approach as click_add_gdn)."""
+    """Clicks the 'ADD GDN DETAIL' link on the page shown after Insert succeeds."""
     wait = WebDriverWait(driver, 20)
 
     add_detail_link = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, "//span[normalize-space(text())='ADD GDN DETAIL']/ancestor::a[@data-hj-test-id='hj-link']")
+            (By.XPATH, "//span[normalize-space(text())='ADD GDN DETAIL']/ancestor::a")
         )
     )
     try:
@@ -1731,16 +2047,7 @@ def click_add_gdn_detail(driver):
 
 
 def click_add_all_to_gdn(driver):
-    """Clicks the 'Add All to GDN' button.
-
-    This one combines two things seen separately on other buttons: like
-    the Query button, the wrapping <li> has a Knockout `disabled` binding
-    that must clear before a click actually does anything; but like
-    'Add GDN', its `data-hj-test-id` is bound to a dynamic observable
-    (`testId`) rather than a fixed string, so we can't select on that
-    attribute reliably -- we locate the <li> via its visible text instead,
-    then wait for 'disabled' to clear specifically on that <li> before
-    clicking the inner <a>."""
+    """Clicks the 'Add All to GDN' button."""
     wait = WebDriverWait(driver, 20)
 
     add_all_li = wait.until(
@@ -1764,16 +2071,7 @@ def click_add_all_to_gdn(driver):
 
 
 def click_print_gdn_sku(driver):
-    """Clicks the 'PRINT GDN - SKU' button.
-
-    There are TWO buttons in the same toolbar sharing the exact text
-    'PRINT GDN - SKU' -- confirmed from a screenshot that both are
-    visible at once, at the 2nd and 3rd positions in the toolbar
-    respectively. The desired one is the SECOND occurrence (position 3
-    overall). Since both are genuinely visible, filtering by is_displayed()
-    alone can't distinguish them -- we rely on DOM order matching the
-    left-to-right visual order in the toolbar and pick the second visible
-    match."""
+    """Clicks the 'PRINT GDN - SKU' button (2nd visible occurrence)."""
     wait = WebDriverWait(driver, 20)
 
     def _second_visible_print_link(d):
@@ -1794,27 +2092,26 @@ def click_print_gdn_sku(driver):
 
 
 def click_ok_if_present(driver, timeout=8):
-    """Clicks a dialog/confirmation 'OK' button IF one appears -- this is a
-    plain <button class="k-button"> (not a knockout <a> link like the other
-    buttons), gated by `visible: _visible` and `enable: _enabled` bindings,
-    so it may or may not show up depending on what the previous action did.
-
-    Since its appearance is conditional, this uses a short wait and treats
-    a timeout as "it just didn't appear this time" rather than an error --
-    unlike every other click_* helper in this file, which assume the
-    target must be there and let a timeout bubble up as a real failure."""
+    """Clicks a dialog/confirmation 'OK' button IF one appears."""
     short_wait = WebDriverWait(driver, timeout)
 
     try:
         ok_button = short_wait.until(
             EC.visibility_of_element_located(
-                (By.XPATH, "//button[contains(@class,'k-button')][.//span[normalize-space(text())='OK']]")
+                (
+                    By.XPATH,
+                    "//button[contains(@class,'k-button')][normalize-space(.)='OK' or .//span[normalize-space(text())='OK']] | "
+                    "//a[contains(@class,'k-button')][normalize-space(.)='OK' or .//span[normalize-space(text())='OK']]"
+                )
             )
         )
     except TimeoutException:
         return False  # no OK dialog appeared -- nothing to do
 
-    short_wait.until(lambda d: ok_button.is_enabled())
+    try:
+        short_wait.until(lambda d: ok_button.is_enabled())
+    except Exception:
+        pass
 
     try:
         ok_button.click()
@@ -1854,6 +2151,28 @@ def check_for_quantity_discrepancy_error(driver):
     except Exception:
         return False
     return False
+
+
+def is_add_gdn_detail_button_available(driver):
+    """Returns True if the 'ADD GDN DETAIL' link is present AND VISIBLE
+    on the page (the <a> wrapping a <span> whose text is 'ADD GDN
+    DETAIL'). Used to detect when the page shown after clicking 'Add
+    GDN' has finished loading enough to show this button, WITHOUT
+    clicking it (the real click still happens in click_add_gdn_detail()
+    as its own step). Never raises -- any lookup failure just means "not
+    available yet".
+
+    Checks is_displayed(), not just presence in the DOM: Knockout apps
+    commonly leave elements from a previous page state sitting in the DOM
+    (hidden) rather than removing them, so a plain find_element() can
+    match a stale, invisible leftover and report "available" when the
+    real button isn't showing yet -- which was silently skipping the
+    refresh loop in _wait_for_add_gdn_detail_button()."""
+    try:
+        el = driver.find_element(By.XPATH, "//span[normalize-space(text())='ADD GDN DETAIL']/ancestor::a")
+        return el.is_displayed()
+    except Exception:
+        return False
 
 
 def click_refresh_page_button(driver, timeout=8):
@@ -1916,15 +2235,11 @@ def click_send_grn_button(driver, timeout=8):
 
 
 def click_send_button(driver):
-    """Clicks the 'Send' button that appears after Add All to GDN. Same
-    knockout <a> pattern as Query/other toolbar buttons (href="#",
-    click: click), with no unique id/data-hj-test-id -- so it's located by
-    its visible "Send" label text instead, same approach used for the
-    menu items on the search page."""
+    """Clicks the 'Send' button that appears after Add All to GDN."""
     wait = WebDriverWait(driver, 20)
     send_link = wait.until(
         EC.element_to_be_clickable(
-            (By.XPATH, "//a[.//span[normalize-space(text())='Send']]")
+            (By.XPATH, "//a[.//span[normalize-space(text())='Send'] or normalize-space(.)='Send']")
         )
     )
     try:
@@ -2198,6 +2513,28 @@ def fill_seal_number(driver, seal_number: str):
 
 
 if __name__ == "__main__":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('efl.nexus.korber')
+    except Exception:
+        pass
+
     root = tk.Tk()
+    for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, icon_name)
+        if not os.path.exists(icon_path) and getattr(sys, 'frozen', False):
+            icon_path = os.path.join(os.path.dirname(sys.executable), icon_name)
+        if os.path.exists(icon_path):
+            try:
+                root.iconbitmap(default=icon_path)
+                break
+            except Exception:
+                try:
+                    root.iconbitmap(icon_path)
+                    break
+                except Exception:
+                    pass
+
     app = KorberApp(root)
     root.mainloop()

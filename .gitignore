@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.efl_records_cache.json
+
+# Runtime-generated folders — never commit these
+diagnostics/
+chrome_automation_profile_*/

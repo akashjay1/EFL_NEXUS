@@ -991,8 +991,8 @@ class SendVarianceDialog(tk.Toplevel):
         # Palette
         palette = self.app.DARK_PALETTE if (self.app and self.app.dark_mode.get()) else (
             self.app.LIGHT_PALETTE if self.app else {
-                'bg': '#ECF0F1', 'panel_bg': '#FFFFFF', 'fg': '#2C3E50',
-                'entry_bg': '#FFFFFF', 'entry_fg': '#000000', 'button_fg': '#FFFFFF'
+                'bg': '#faf8f2', 'panel_bg': '#ffffff', 'fg': '#0f172a',
+                'entry_bg': '#ffffff', 'entry_fg': '#0f172a', 'button_fg': '#ffffff'
             }
         )
         self.palette = palette
@@ -1624,7 +1624,7 @@ class ReconciliationApp:
         self.embedded = not standalone
         self.theme_target = container if container is not None else root
         if standalone:
-            self.root.title("Load Reconciliation Tool v2.1")
+            self.root.title("Load Reconciliation v2.1")
             self.root.minsize(1200, 750)
         
         # Load any previously saved settings before building the UI so the
@@ -1653,30 +1653,30 @@ class ReconciliationApp:
         
         # Set colors
         self.colors = {
-            'primary': '#2C3E50',
-            'secondary': '#3498DB',
-            'success': '#27AE60',
-            'danger': '#E74C3C',
-            'warning': '#F39C12',
-            'bg': '#ECF0F1',
-            'white': '#FFFFFF',
-            'info': '#1ABC9C'
+            'primary': '#0d1b2a',
+            'secondary': '#00b7ff',
+            'success': '#10b981',
+            'danger': '#ef4444',
+            'warning': '#f59e0b',
+            'bg': '#faf8f2',
+            'white': '#ffffff',
+            'info': '#00e5ff'
         }
         
         # Light / dark palettes used by apply_theme()
         self.LIGHT_PALETTE = {
-            'bg': '#ECF0F1', 'panel_bg': '#FFFFFF', 'fg': '#2C3E50', 'subtle_fg': '#7F8C8D',
-            'entry_bg': '#FFFFFF', 'entry_fg': '#000000',
-            'tree_bg': '#FFFFFF', 'tree_fg': '#000000', 'tree_heading_bg': '#E4E7E9',
-            'oddrow': '#F5F5F5', 'evenrow': '#FFFFFF',
-            'title_fg': '#2C3E50', 'button_fg': '#FFFFFF',
+            'bg': '#faf8f2', 'panel_bg': '#ffffff', 'fg': '#0f172a', 'subtle_fg': '#64748b',
+            'entry_bg': '#ffffff', 'entry_fg': '#0f172a',
+            'tree_bg': '#ffffff', 'tree_fg': '#0f172a', 'tree_heading_bg': '#e2e8f0',
+            'oddrow': '#f8fafc', 'evenrow': '#ffffff',
+            'title_fg': '#0f172a', 'button_fg': '#ffffff',
         }
         self.DARK_PALETTE = {
-            'bg': '#1E1E1E', 'panel_bg': '#2B2B2B', 'fg': '#ECECEC', 'subtle_fg': '#AAAAAA',
-            'entry_bg': '#3C3C3C', 'entry_fg': '#ECECEC',
-            'tree_bg': '#2B2B2B', 'tree_fg': '#ECECEC', 'tree_heading_bg': '#3C3C3C',
-            'oddrow': '#262626', 'evenrow': '#2B2B2B',
-            'title_fg': '#5DADE2', 'button_fg': '#FFFFFF',
+            'bg': '#0b1420', 'panel_bg': '#13233a', 'fg': '#ececec', 'subtle_fg': '#94a3b8',
+            'entry_bg': '#162e4c', 'entry_fg': '#ececec',
+            'tree_bg': '#13233a', 'tree_fg': '#ececec', 'tree_heading_bg': '#162e4c',
+            'oddrow': '#0f1b2d', 'evenrow': '#13233a',
+            'title_fg': '#00e5ff', 'button_fg': '#ffffff',
         }
         
         # Variables
@@ -1917,9 +1917,9 @@ class ReconciliationApp:
         if hasattr(self, 'canvas'):
             self.canvas.configure(bg=palette['bg'])
         if hasattr(self, 'title_label'):
-            self.title_label.configure(bg=palette['bg'], fg=palette['title_fg'])
+            self.title_label.configure(bg='#0b1420', fg='#ffffff')
         if hasattr(self, 'subtitle_label'):
-            self.subtitle_label.configure(bg=palette['bg'], fg=palette['subtle_fg'])
+            self.subtitle_label.configure(bg='#0b1420', fg='#94a3b8')
         if hasattr(self, 'footer_label'):
             self.footer_label.configure(bg=palette['bg'], fg=palette['subtle_fg'])
         if hasattr(self, 'error_label'):
@@ -1934,6 +1934,60 @@ class ReconciliationApp:
                 tree.tag_configure('evenrow', background=palette['evenrow'])
     
     def create_widgets(self):
+        # --- Header banner (matches Korber Automation & Outlook Email Sender) ---
+        HEADER_BG = "#0b1420"
+        HEADER_BTN_BG = "#162e4c"
+        HEADER_BTN_BG_HOVER = "#1f3f66"
+
+        header = tk.Frame(self.theme_target, bg=HEADER_BG)
+        header.pack(fill="x", side="top")
+
+        header_top_row = tk.Frame(header, bg=HEADER_BG)
+        header_top_row.pack(fill="x", padx=20, pady=(16, 0))
+
+        self.title_label = tk.Label(
+            header_top_row,
+            text="Load Reconciliation",
+            font=('Segoe UI', 15, 'bold'),
+            bg=HEADER_BG,
+            fg="#ffffff"
+        )
+        self.title_label.pack(side="left")
+
+        def _make_header_button(parent, text, command):
+            btn = tk.Label(
+                parent, text=text, bg=HEADER_BTN_BG, fg="#ffffff",
+                font=("Segoe UI", 8, "bold"), cursor="hand2",
+                padx=8, pady=4,
+            )
+            btn.bind("<Button-1>", lambda e: command())
+            btn.bind("<Enter>", lambda e: btn.config(bg=HEADER_BTN_BG_HOVER))
+            btn.bind("<Leave>", lambda e: btn.config(bg=HEADER_BTN_BG))
+            return btn
+
+        # Header action buttons (top right)
+        if not self.embedded:
+            self.settings_button = _make_header_button(
+                header_top_row, "⚙ Settings", self.open_settings_dialog
+            )
+            self.settings_button.pack(side="right")
+
+        self.send_variance_button = _make_header_button(
+            header_top_row, "📧 Send Variance", self.open_send_variance_dialog
+        )
+        self.send_variance_button.pack(
+            side="right", padx=(0, 6) if not self.embedded else 0
+        )
+
+        self.subtitle_label = tk.Label(
+            header,
+            text="Compare Actual Dispatches Against Planned Loads",
+            font=('Segoe UI', 9),
+            bg=HEADER_BG,
+            fg="#94a3b8"
+        )
+        self.subtitle_label.pack(anchor="w", padx=20, pady=(0, 14))
+
         # Main container
         main_container = ttk.Frame(self.theme_target)
         main_container.pack(fill=tk.BOTH, expand=True)
@@ -1958,54 +2012,19 @@ class ReconciliationApp:
             lambda e: self.canvas.itemconfig(self.canvas_window, width=e.width)
         )
         
-        # Title (left) + Action buttons (top right) share row 0
-        self.title_label = tk.Label(
-            main_frame,
-            text="📦 Load Reconciliation Tool",
-            font=('Segoe UI', 22, 'bold'),
-            fg=self.colors['primary']
-        )
-        self.title_label.grid(row=0, column=0, pady=(0, 5), sticky="w")
-        
-        header_actions = ttk.Frame(main_frame)
-        header_actions.grid(row=0, column=1, pady=(0, 5), sticky="ne")
-
-        self.send_variance_button = ttk.Button(
-            header_actions,
-            text="📧 Send Variance",
-            command=self.open_send_variance_dialog
-        )
-        self.send_variance_button.pack(side=tk.RIGHT, padx=(6, 0))
-
-        self.settings_button = ttk.Button(
-            header_actions,
-            text="⚙️ Settings",
-            command=self.open_settings_dialog
-        )
-        if not self.embedded:
-            self.settings_button.pack(side=tk.RIGHT)
-        
-        self.subtitle_label = tk.Label(
-            main_frame,
-            text="Automated reconciliation between Loading History and Load Plan",
-            font=('Segoe UI', 11),
-            fg='#7F8C8D'
-        )
-        self.subtitle_label.grid(row=1, column=0, columnspan=2, pady=(0, 15), sticky="w")
-        
         # ===== TWO-COLUMN LAYOUT =====
         # Left column: setup (files, output, options, progress, run controls)
         # Right column: data preview + activity log, using the space that used
         # to sit blank while everything was stacked in one column.
         left_column = ttk.Frame(main_frame)
-        left_column.grid(row=2, column=0, sticky="nsew", padx=(0, 15))
+        left_column.grid(row=0, column=0, sticky="nsew", padx=(0, 15))
         
         right_column = ttk.Frame(main_frame)
-        right_column.grid(row=2, column=1, sticky="nsew")
+        right_column.grid(row=0, column=1, sticky="nsew")
         
         main_frame.columnconfigure(0, weight=0, minsize=520)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(2, weight=1)
+        main_frame.rowconfigure(0, weight=1)
         
         # ===== FILE SELECTION FRAME =====
         file_frame = ttk.LabelFrame(left_column, text="📁 Select Files", padding="15")
@@ -2339,8 +2358,8 @@ class ReconciliationApp:
             log_container,
             height=8,
             font=('Consolas', 9),
-            bg='#2C3E50',
-            fg='#ECF0F1',
+            bg='#0b1420',
+            fg='#f8fafc',
             wrap=tk.WORD,
             state=tk.DISABLED
         )
@@ -2389,11 +2408,11 @@ class ReconciliationApp:
         
         self.footer_label = tk.Label(
             main_frame,
-            text="© 2026 Load Reconciliation Tool v2.1 | Made with ❤️",
+            text="© 2026 Load Reconciliation v2.1 | Made with ❤️",
             font=('Segoe UI', 8),
             fg='#BDC3C7'
         )
-        self.footer_label.grid(row=3, column=0, columnspan=2, pady=(15, 0))
+        self.footer_label.grid(row=1, column=0, columnspan=2, pady=(15, 0))
         
         # Initial log message
         self.add_log("ℹ️ Application started. Select files and click Run Reconciliation.", "INFO")
@@ -3775,7 +3794,7 @@ if __name__ == "__main__":
         pass
 
     root = tk.Tk()
-    for icon_name in ("favicon.ico", "icon.ico"):
+    for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
         base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         icon_path = os.path.join(base_dir, icon_name)
         if not os.path.exists(icon_path) and getattr(sys, 'frozen', False):

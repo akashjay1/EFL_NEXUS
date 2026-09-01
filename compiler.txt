@@ -1,0 +1,14 @@
+:: ========================================================
+:: EFL NEXUS - Fast Directory Mode Build Commands
+:: ========================================================
+
+:: 1. Build Fast Directory-Mode Application (EFL_NEXUS/)
+pyinstaller main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=PIL --collect-all=openpyxl --hidden-import=pandas --hidden-import=openpyxl --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=winreg --hidden-import=customtkinter --add-data "version.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "assets;assets"
+
+:: 2. Build Companion Updater into dist/EFL_NEXUS/
+pyinstaller updater.py --name=updater --noconsole --noconfirm --onefile --distpath=dist\EFL_NEXUS --icon=icon_2.ico --hidden-import=requests --add-data "icon_2.ico;." --add-data "icon.ico;."
+
+:: 3. Build Full Windows Install Wizard (EFL_NEXUS_Setup.exe)
+pyinstaller installer_wizard.py --name=EFL_NEXUS_Setup --noconsole --noconfirm --onefile --icon=icon_2.ico --collect-all=PIL --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --add-data "dist/EFL_NEXUS;payload"
+
+:: Note: You can run 'build_standalone.bat' to execute the complete build and packaging pipeline in 1 click.

@@ -72,7 +72,7 @@ class UpdaterApp:
         root.resizable(False, False)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        for icon_name in ("favicon.ico", "icon.ico"):
+        for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
             icon_path = os.path.join(app_dir, icon_name)
             if not os.path.exists(icon_path) and getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
                 icon_path = os.path.join(sys._MEIPASS, icon_name)
@@ -264,6 +264,9 @@ class UpdaterApp:
         self_exe_name = os.path.basename(sys.executable) if getattr(sys, "frozen", False) else None
 
         for item in entries:
+            if item.lower() in ("config.json", ".env"):
+                self.log.info(f"Skipping user config file '{item}' during update to preserve user settings.")
+                continue
             src = os.path.join(source_dir, item)
             dst = os.path.join(self.app_dir, item)
             if self_exe_name and item.lower() == self_exe_name.lower():

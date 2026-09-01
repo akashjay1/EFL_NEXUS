@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import logging
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -35,19 +36,93 @@ from selenium.webdriver.chrome.service import Service
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# Look for .env in the same folder as this script (not the current working
-# directory), so it works no matter where you run "python korber_login_bot.py" from.
-ENV_PATH = Path(__file__).resolve().parent / ".env"
-loaded = load_dotenv(dotenv_path=ENV_PATH)
+# Look for .env next to the executable if frozen, or next to this script in dev mode.
+if getattr(sys, "frozen", False):
+    _base = Path(sys.executable).resolve().parent
+    ENV_PATH = _base / ".env"
+    loaded = load_dotenv(dotenv_path=ENV_PATH)
+    if not loaded and hasattr(sys, "_MEIPASS"):
+        _mei_env = Path(sys._MEIPASS) / ".env"
+        if _mei_env.exists():
+            loaded = load_dotenv(dotenv_path=_mei_env)
+else:
+    ENV_PATH = Path(__file__).resolve().parent / ".env"
+    loaded = load_dotenv(dotenv_path=ENV_PATH)
 
-if not loaded:
-    log.warning(f"Could not find or load .env at: {ENV_PATH}")
-    log.warning("Check: (1) the file is literally named '.env' with no extra extension "
-                "like .env.txt, (2) it's in the same folder as this script.")
 
-KORBER_URL = os.environ.get("KORBER_URL")
-USERNAME = os.environ.get("KORBER_USER")
-PASSWORD = os.environ.get("KORBER_PASS")
+def get_base_dir():
+    """Returns the base application directory where config.json and .env reside."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def get_credentials():
+    """Dynamically resolves and returns (korber_url, username, password).
+    Checks:
+    1. config.json (saved via UI Settings)
+    2. os.environ
+    3. .env file
+    """
+    base_dir = get_base_dir()
+    cfg_path = base_dir / "config.json"
+    url = ""
+    user = ""
+    pwd = ""
+
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                user = data.get("korber_user", "").strip()
+                pwd = data.get("korber_pass", "").strip()
+                url = data.get("korber_url", "").strip()
+        except Exception:
+            pass
+
+    if not user:
+        user = os.environ.get("KORBER_USER", "").strip()
+    if not pwd:
+        pwd = os.environ.get("KORBER_PASS", "").strip()
+    if not url:
+        url = os.environ.get("KORBER_URL", "").strip() or "https://lopwaprodweb.koerbercloud.com/core/Default.html"
+
+    return url, user, pwd
+
+
+def save_credentials(username, password, url=None):
+    """Saves user-configured Körber credentials to config.json and active runtime environment."""
+    base_dir = get_base_dir()
+    cfg_path = base_dir / "config.json"
+    data = {}
+
+    if cfg_path.exists():
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+
+    data["korber_user"] = str(username).strip()
+    data["korber_pass"] = str(password).strip()
+    if url:
+        data["korber_url"] = str(url).strip()
+    elif "korber_url" not in data:
+        data["korber_url"] = "https://lopwaprodweb.koerbercloud.com/core/Default.html"
+
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        log.warning(f"Could not save credentials to {cfg_path}: {e}")
+
+    # Update runtime environment
+    os.environ["KORBER_USER"] = data["korber_user"]
+    os.environ["KORBER_PASS"] = data["korber_pass"]
+    os.environ["KORBER_URL"] = data["korber_url"]
+
+
+KORBER_URL, USERNAME, PASSWORD = get_credentials()
 
 
 def open_new_browser(headless: bool = False, profile_name: str = "default"):
@@ -90,7 +165,11 @@ def open_new_browser(headless: bool = False, profile_name: str = "default"):
     # to find/delete if you ever want to reset it (e.g. if login state
     # gets stuck).
     safe_name = "".join(c for c in profile_name if c.isalnum() or c in ("-", "_")) or "default"
-    profile_dir = Path(__file__).resolve().parent / f"chrome_automation_profile_{safe_name}"
+    if getattr(sys, "frozen", False):
+        _prof_base = Path(sys.executable).resolve().parent
+    else:
+        _prof_base = Path(__file__).resolve().parent
+    profile_dir = _prof_base / f"chrome_automation_profile_{safe_name}"
     profile_dir.mkdir(exist_ok=True)
 
     # If the browser was closed by hand (clicking the X) instead of via
@@ -140,10 +219,21 @@ def open_new_browser(headless: bool = False, profile_name: str = "default"):
     return driver
 
 
-def login(driver):
+def login(driver, username=None, password=None, url=None):
+    dyn_url, dyn_user, dyn_pwd = get_credentials()
+    target_url = url or dyn_url or "https://lopwaprodweb.koerbercloud.com/core/Default.html"
+    target_user = username or dyn_user
+    target_pwd = password or dyn_pwd
+
+    if not target_user or not target_pwd:
+        raise ValueError(
+            "Körber Username or Password is not configured.\n"
+            "Please go to Settings (⚙) in EFL NEXUS to enter and save your login credentials."
+        )
+
     wait = WebDriverWait(driver, 20)
-    driver.get(KORBER_URL)
-    log.info(f"Opened {KORBER_URL}")
+    driver.get(target_url)
+    log.info(f"Opened {target_url} for user '{target_user}'")
 
     # This page is built on Kendo UI / Knockout (custom <hj-textbox> elements
     # wrapping the real <input>). There is no plain id="username" — instead
@@ -163,7 +253,7 @@ def login(driver):
         )
 
     username_field.clear()
-    username_field.send_keys(USERNAME)
+    username_field.send_keys(target_user)
 
     # Confirmed: password field uses <hj-password-textbox> (a different
     # custom tag from the username field's <hj-textbox>).
@@ -177,7 +267,7 @@ def login(driver):
         )
 
     password_field.clear()
-    password_field.send_keys(PASSWORD)
+    password_field.send_keys(target_pwd)
 
     # Confirmed: login button is <hj-button data-hj-test-id="actionButton">
     # wrapping a <button class="k-button"> with a <span>Login</span> inside.
