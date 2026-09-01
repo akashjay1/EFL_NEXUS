@@ -5,3 +5,4 @@ __pycache__/
 # Runtime-generated folders — never commit these
 diagnostics/
 chrome_automation_profile_*/
+credentials.json
