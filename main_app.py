@@ -620,6 +620,25 @@ class MainApp:
 
         return "1.0.0"
 
+    def get_current_build(self) -> int:
+        """Read the installed hotfix build number from build.txt in app_dir.
+
+        Returns 0 when build.txt is absent (fresh install or pre-hotfix release).
+        This number is compared against the highest build number found among
+        patch assets on the current GitHub Release.
+        """
+        if getattr(sys, 'frozen', False):
+            build_path = Path(sys.executable).parent / "build.txt"
+        else:
+            build_path = Path(__file__).resolve().parent / "build.txt"
+
+        if build_path.exists():
+            try:
+                return int(build_path.read_text(encoding="utf-8").strip())
+            except (ValueError, OSError):
+                pass
+        return 0
+
     def check_for_updates(self, silent=False):
         if not self.is_online:
             if not silent:
@@ -636,9 +655,11 @@ class MainApp:
         ).start()
 
     def _check_for_updates_worker(self, silent=False):
+        import re as _re
         import requests
         api_url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
         current_version = self.get_current_version()
+        current_build   = self.get_current_build()
 
         try:
             headers = {"User-Agent": "EFL-Nexus-Updater"}
@@ -648,43 +669,128 @@ class MainApp:
 
             latest_version = data.get("tag_name", "").strip().lstrip("v")
 
-            download_url = None
-            for asset in data.get("assets", []):
-                if asset.get("name", "").endswith(".zip"):
-                    download_url = asset.get("browser_download_url")
-                    break
+            # ---------------------------------------------------------------
+            # Pass 1 — collect assets, categorised by type:
+            #   * hotfix_patches : Patch_v<current_ver>_b<N>.zip  (same version)
+            #   * upgrade_patch  : Patch_v<latest_ver>_b*.zip     (newer version)
+            #   * full_zip       : first non-patch .zip            (full fallback)
+            # ---------------------------------------------------------------
+            # Regex that matches patch assets for a SPECIFIC version:
+            #   EFL_Nexus_Patch_v1.0.5_b3.zip
+            hotfix_pat = _re.compile(
+                r"EFL_Nexus_Patch_v"
+                + _re.escape(current_version)
+                + r"_b(\d+)\.zip$",
+                _re.IGNORECASE,
+            )
+            upgrade_patch_pat = _re.compile(
+                r"EFL_Nexus_Patch_v[\d.]+_b(\d+)\.zip$",
+                _re.IGNORECASE,
+            )
 
-            if not download_url:
-                if not silent:
+            hotfix_patches = []   # list of (build_int, url, size)
+            upgrade_patch_url  = None
+            upgrade_patch_size = 0
+            full_url  = None
+            full_size = 0
+
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                url  = asset.get("browser_download_url", "")
+                size = asset.get("size", 0)
+                if not name.lower().endswith(".zip"):
+                    continue
+
+                hm = hotfix_pat.match(name)
+                if hm:
+                    hotfix_patches.append((int(hm.group(1)), url, size))
+                    continue
+
+                if upgrade_patch_pat.match(name):
+                    if upgrade_patch_url is None:  # take first upgrade patch
+                        upgrade_patch_url  = url
+                        upgrade_patch_size = size
+                    continue
+
+                # Plain non-patch ZIP — treat as full-release fallback
+                if full_url is None:
+                    full_url  = url
+                    full_size = size
+
+            # ---------------------------------------------------------------
+            # Pass 2a — Version upgrade check (existing behaviour)
+            # ---------------------------------------------------------------
+            try:
+                from packaging.version import Version
+                is_newer_version = Version(latest_version) > Version(current_version)
+            except Exception:
+                try:
+                    is_newer_version = (
+                        tuple(map(int, latest_version.split('.'))) >
+                        tuple(map(int, current_version.split('.')))
+                    )
+                except Exception:
+                    is_newer_version = latest_version > current_version
+
+            if is_newer_version:
+                # Prefer upgrade patch ZIP over full ZIP for version upgrades
+                is_patch      = upgrade_patch_url is not None
+                download_url  = upgrade_patch_url  if is_patch else full_url
+                download_size = upgrade_patch_size if is_patch else full_size
+
+                if download_url:
+                    self.root.after(
+                        0,
+                        lambda lv=latest_version, cv=current_version,
+                               du=download_url, ip=is_patch, ds=download_size:
+                            self._prompt_update(lv, cv, du, ip, ds,
+                                                is_hotfix=False)
+                    )
+                elif not silent:
                     self.root.after(
                         0,
                         lambda: messagebox.showerror(
-                            "Update Error", "No .zip asset found in the latest GitHub release."
+                            "Update Error",
+                            "No .zip asset found in the latest GitHub release."
                         )
                     )
-                return
+                return  # version upgrade takes priority; skip hotfix check
 
-            def parse_ver(v):
-                return tuple(map(int, v.split('.')))
+            # ---------------------------------------------------------------
+            # Pass 2b — Same-version hotfix check
+            # Only runs when the release version == current installed version.
+            # ---------------------------------------------------------------
+            if hotfix_patches:
+                # Pick the highest build number available on the release
+                hotfix_patches.sort(key=lambda t: t[0], reverse=True)
+                best_build, best_url, best_size = hotfix_patches[0]
 
-            try:
-                is_newer = parse_ver(latest_version) > parse_ver(current_version)
-            except Exception:
-                is_newer = latest_version > current_version
-
-            if is_newer:
-                self.root.after(
-                    0,
-                    lambda: self._prompt_update(latest_version, current_version, download_url)
-                )
-            else:
-                if not silent:
+                if best_build > current_build:
                     self.root.after(
                         0,
-                        lambda: messagebox.showinfo(
-                            "Up to Date", f"You are running the latest version (v{current_version})."
-                        )
+                        lambda cv=current_version, cb=current_build,
+                               bb=best_build, du=best_url, ds=best_size:
+                            self._prompt_update(
+                                cv, cv, du,
+                                is_patch=True,
+                                download_size=ds,
+                                is_hotfix=True,
+                                current_build=cb,
+                                new_build=bb,
+                            )
                     )
+                    return
+
+            # No update of any kind
+            if not silent:
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Up to Date",
+                        f"You are running the latest version\n"
+                        f"v{current_version}  build {current_build}."
+                    )
+                )
 
         except Exception as e:
             if not silent:
@@ -695,22 +801,78 @@ class MainApp:
                     )
                 )
 
-    def _prompt_update(self, latest_version, current_version, download_url):
-        if messagebox.askyesno(
-            "Update Available",
-            f"A new version ({latest_version}) is available!\n\n"
-            f"Current Version: v{current_version}\n\n"
-            f"Would you like to download and update now?"
-        ):
+    def _prompt_update(self, latest_version, current_version, download_url,
+                        is_patch=False, download_size=0,
+                        is_hotfix=False, current_build=0, new_build=0):
+        """Prompt the user to install an available update or hotfix.
+
+        Parameters
+        ----------
+        latest_version : str
+            The new version string (without leading 'v').
+        current_version : str
+            The currently installed version string.
+        download_url : str
+            Direct URL to the ZIP asset (patch preferred, full as fallback).
+        is_patch : bool
+            True when *download_url* points to a differential patch ZIP.
+        download_size : int
+            Reported byte size of the asset (0 when unknown).
+        is_hotfix : bool
+            True when the version number is unchanged but a higher build is
+            available on the same release (same-version hotfix).
+        current_build : int
+            The locally installed build number (used for hotfix display).
+        new_build : int
+            The remote build number being offered (used for hotfix display).
+        """
+        # Build the size hint string
+        if download_size > 0:
+            size_mb = download_size / (1024 * 1024)
+            size_hint = f"{size_mb:.1f} MB"
+        else:
+            size_hint = "unknown size"
+
+        if is_hotfix:
+            title = "Hotfix Available"
+            heading = (
+                f"A hotfix is available for v{current_version}!\n\n"
+                f"Installed : v{current_version}  build {current_build}\n"
+                f"Available : v{current_version}  build {new_build}\n\n"
+                f"Hotfix patch — {size_hint}\n"
+                f"Only changed files will be downloaded (fast).\n\n"
+                f"Would you like to install the hotfix now?"
+            )
+        else:
+            update_type = "Patch update" if is_patch else "Full update"
+            type_note = (
+                "Only changed files will be downloaded (fast)."
+                if is_patch else
+                "The complete application package will be downloaded."
+            )
+            title = "Update Available"
+            heading = (
+                f"A new version (v{latest_version}) is available!\n\n"
+                f"Current Version : v{current_version}\n"
+                f"New Version     : v{latest_version}\n\n"
+                f"{update_type} — {size_hint}\n"
+                f"{type_note}\n\n"
+                f"Would you like to download and install the update now?"
+            )
+
+        if messagebox.askyesno(title, heading):
             if getattr(sys, 'frozen', False):
                 app_dir = Path(sys.executable).parent
             else:
                 app_dir = Path(__file__).resolve().parent
-                
+
             updater_exe = app_dir / "updater.exe"
 
             if not updater_exe.exists():
-                messagebox.showerror("Update Error", "updater.exe was not found in the application directory.")
+                messagebox.showerror(
+                    "Update Error",
+                    "updater.exe was not found in the application directory."
+                )
                 return
 
             cmd = [
@@ -718,7 +880,7 @@ class MainApp:
                 "--url", download_url,
                 "--version", latest_version,
                 "--pid", str(os.getpid()),
-                "--appdir", str(app_dir)
+                "--appdir", str(app_dir),
             ]
 
             subprocess.Popen(cmd)
@@ -1261,6 +1423,7 @@ class MainApp:
             return
 
         try:
+            page.configure(bg="#060d17")
             self.tool4_app = efldatamanager.EFLApp(
                 self.root, container=page, standalone=False
             )

@@ -6,3 +6,6 @@ __pycache__/
 diagnostics/
 chrome_automation_profile_*/
 credentials.json
+build/
+dist/
+*.spec
