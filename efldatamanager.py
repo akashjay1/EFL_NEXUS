@@ -962,6 +962,7 @@ class EFLApp:
         self.status_dot = None
         self.status_label = None
         self.connection_status = False
+        self.is_loading = False
         # Ensure local disk cache is in memory for 0s startup
         _load_local_disk_cache()
 
@@ -1858,7 +1859,7 @@ class EFLApp:
         threading.Thread(target=fetch_and_update, daemon=True).start()
 
     def auto_refresh_counts(self):
-        if not self.is_loading and self.current_user and self.main_frame and self.main_frame.winfo_exists():
+        if not getattr(self, 'is_loading', False) and self.current_user and self.main_frame and self.main_frame.winfo_exists():
             self.update_all_counts()
         self.auto_refresh_timer = self.root.after(AUTO_REFRESH_INTERVAL, self.auto_refresh_counts)
 

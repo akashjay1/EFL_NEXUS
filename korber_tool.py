@@ -26,6 +26,7 @@ from selenium.common.exceptions import (
     ElementClickInterceptedException,
     ElementNotInteractableException,
     NoSuchElementException,
+    JavascriptException,
 )
 
 import korber_login_bot as bot  # reuses open_new_browser() and login() from the file we already built
@@ -41,6 +42,7 @@ RETRYABLE_EXCEPTIONS = (
     ElementClickInterceptedException,
     ElementNotInteractableException,
     NoSuchElementException,
+    JavascriptException,
 )
 
 # The "Quantity discrepancy found ... No changes were applied" system error
@@ -1603,7 +1605,15 @@ def set_grid_page_size(driver, size: str):
 
 def set_page_size(driver, size: str):
     """Sets the grid's 'rows per page' dropdown (options: 5/10/15/20/25/50/100).
-    Falls back to JS scan if XPath lookup doesn't match."""
+
+    Strategy (three-level fallback so GRN and GDN grids are both covered):
+    1. XPath lookup for a select whose options include both '5' and '100'
+       (the standard Kendo page-size fingerprint on most pages).
+    2. JS fingerprint scan via set_grid_page_size() which expects the full
+       5/10/15/20/25/50/100 set exactly.
+    3. Broad JS fallback: find any select[data-role='dropdownlist'] that has
+       a '100' option, regardless of what the other options are -- covers
+       GRN result grids whose option set differs from the GDN grid's."""
     try:
         wait = WebDriverWait(driver, 10)
         xpath = (
@@ -1612,8 +1622,34 @@ def set_page_size(driver, size: str):
         )
         page_size_select = wait.until(EC.presence_of_element_located((By.XPATH, xpath)))
         set_kendo_dropdown_value(driver, page_size_select, size)
+        return
     except Exception:
+        pass
+
+    try:
         set_grid_page_size(driver, size)
+        return
+    except Exception:
+        pass
+
+    # Broad fallback: any Kendo dropdown select that exposes a '100' option.
+    driver.execute_script(
+        """
+        var target = null;
+        document.querySelectorAll("select[data-role='dropdownlist']").forEach(function(sel) {
+            var values = Array.prototype.map.call(sel.options, function(o) { return o.value; });
+            if (values.indexOf('100') !== -1) {
+                target = sel;
+            }
+        });
+        if (!target) { throw 'Page size dropdown not found (no select with a 100 option)'; }
+        var widget = jQuery(target).data('kendoDropDownList');
+        if (!widget) { throw 'Kendo widget not initialized on page size dropdown'; }
+        widget.value(arguments[0]);
+        widget.trigger('change');
+        """,
+        size,
+    )
 
 
 def click_query_button(driver):
