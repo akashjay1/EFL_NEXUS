@@ -1,7 +1,13 @@
-__pycache__/
-*.pyc
-.efl_records_cache.json
+# Exclude credentials
+credentials.json
 
-# Runtime-generated folders — never commit these
-diagnostics/
-chrome_automation_profile_*/
+# Cache and temporary files
+.efl_records_cache.json
+*.pyc
+*.spec
+
+# Exclude all folders except assets
+/*/
+!/assets/
+.vscode/
+__pycache__/

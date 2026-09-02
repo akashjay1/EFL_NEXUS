@@ -168,6 +168,65 @@ _count_cache_timestamp = {}
 
 CACHE_FILE = os.path.join(APP_PATH, ".efl_records_cache.json")
 
+# ==========================================
+# ACTIVITY & CONNECTION LOGGING SYSTEM
+# ==========================================
+_activity_logs = []
+_activity_log_lock = threading.Lock()
+_current_app_instance = None
+
+def add_activity_log(category, message, level="INFO", details=""):
+    """Thread-safe activity logger with timestamping and event dispatch."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    entry = {
+        "timestamp": timestamp,
+        "category": category, # "CONNECTION", "SYNC", "TASK", "CACHE", "AUTH", "SYSTEM"
+        "level": level,       # "INFO", "SUCCESS", "WARN", "ERROR"
+        "message": message,
+        "details": details
+    }
+    with _activity_log_lock:
+        _activity_logs.append(entry)
+        if len(_activity_logs) > 300:
+            _activity_logs.pop(0)
+
+    if _current_app_instance and hasattr(_current_app_instance, '_on_activity_log_added'):
+        try:
+            _current_app_instance.root.after(0, lambda e=entry: _current_app_instance._on_activity_log_added(e))
+        except Exception:
+            pass
+
+def test_connection_diagnostics():
+    """Perform a deep connection and latency test against Google Sheets API."""
+    results = {
+        "connected": False,
+        "latency_ms": 0,
+        "sheets_found": [],
+        "cache_records": (len(_records_cache or []) + len(_records2_cache or [])),
+        "error": ""
+    }
+    t0 = time.time()
+    try:
+        sheet, msg = connect_to_sheets(force_refresh=True)
+        t1 = time.time()
+        results["latency_ms"] = max(1, int((t1 - t0) * 1000))
+        if sheet:
+            results["connected"] = True
+            try:
+                ss = sheet.spreadsheet
+                results["sheets_found"] = [ws.title for ws in ss.worksheets()]
+            except Exception:
+                results["sheets_found"] = ["Sheet1", SHEET2_NAME, SHEET3_NAME]
+            add_activity_log("CONNECTION", f"Connection verified in {results['latency_ms']}ms (Status: Online)", "SUCCESS", f"Worksheets: {', '.join(results['sheets_found'])}")
+        else:
+            results["error"] = msg
+            add_activity_log("CONNECTION", f"Connection test failed: {msg}", "ERROR")
+    except Exception as e:
+        results["latency_ms"] = max(1, int((time.time() - t0) * 1000))
+        results["error"] = str(e)
+        add_activity_log("CONNECTION", f"Connection error: {e}", "ERROR")
+    return results
+
 def _save_local_disk_cache():
     """Save in-memory records to local disk cache for instant startup loading."""
     try:
@@ -199,6 +258,8 @@ def _load_local_disk_cache():
             if _records3_cache is None and "sheet3" in data:
                 _records3_cache = data.get("sheet3", [])
                 _cache_timestamps[SHEET3_NAME] = ts
+            tot = len(_records_cache or []) + len(_records2_cache or [])
+            add_activity_log("CACHE", f"Loaded {tot:,} records from local disk cache", "INFO")
             return True
     except Exception as e:
         print(f"Error loading local cache: {e}")
@@ -275,9 +336,11 @@ def connect_to_sheets(force_refresh=False, sheet_name=None):
                 _sheet_cache = sheet
 
             _connection_status = True
+            add_activity_log("CONNECTION", f"Connected to Google Sheets: '{spreadsheet.title}' ({sheet_name or 'Sheet1'})", "SUCCESS")
             return sheet, "Success"
         except Exception as e:
             _connection_status = False
+            add_activity_log("CONNECTION", f"Connection error: {e}", "ERROR")
             return None, str(e)
 
 def fetch_all_sheets_batch():
@@ -288,6 +351,7 @@ def fetch_all_sheets_batch():
             sheet, msg = connect_to_sheets()
             if not sheet:
                 _connection_status = False
+                add_activity_log("SYNC", f"Batch sync skipped (Offline): {msg}", "WARN")
                 return False, msg
 
             spreadsheet = sheet.spreadsheet
@@ -323,9 +387,12 @@ def fetch_all_sheets_batch():
             # Sync user database in memory from Sheet3 records without extra requests
             sync_users_from_records(_records3_cache)
 
+            tot = len(_records_cache or []) + len(_records2_cache or [])
+            add_activity_log("SYNC", f"Synchronized {tot:,} records (Sheet1: {len(_records_cache or [])}, Sheet2: {len(_records2_cache or [])})", "SUCCESS")
             return True, "Success"
         except Exception as e:
             _connection_status = False
+            add_activity_log("SYNC", f"Batch sync error: {e}", "ERROR")
             return False, str(e)
 
 def preload_data():
@@ -760,9 +827,11 @@ def save_to_sheet(task, job_id, job_status, user_id):
     try:
         sheet, msg = connect_to_sheets()
         if not sheet:
+            add_activity_log("TASK", f"Submit failed (Offline): {task.rstrip(':')} -> Job: {job_id}", "ERROR", msg)
             return False, msg, None
         is_duplicate, existing_user = check_duplicate(task, job_id, job_status)
         if is_duplicate:
+            add_activity_log("TASK", f"Duplicate submit blocked: {task.rstrip(':')} -> Job: {job_id} (Assigned to {existing_user})", "WARN")
             return False, f"Already assigned to {existing_user}", existing_user
 
         timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -782,18 +851,22 @@ def save_to_sheet(task, job_id, job_status, user_id):
             _count_cache.clear()
         else:
             invalidate_cache("sheet1")
+        add_activity_log("TASK", f"Submitted '{task.rstrip(':')}' | Job: {job_id} | Status: {job_status} ({user_id})", "SUCCESS")
         return True, "Saved successfully!", None
     except Exception as e:
         print(f"Error saving: {e}")
+        add_activity_log("TASK", f"Submit exception: {task.rstrip(':')} -> Job: {job_id}: {e}", "ERROR")
         return False, str(e), None
 
 def save_to_sheet2(task, job_id, load_id, lp_count, user_id):
     try:
         sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET2_NAME)
         if not sheet:
+            add_activity_log("TASK", f"Submit failed (Offline): {task.rstrip(':')} -> Job: {job_id}", "ERROR", msg)
             return False, msg, None
         is_duplicate, existing_user = check_duplicate_sheet2(task, job_id, load_id, lp_count)
         if is_duplicate:
+            add_activity_log("TASK", f"Duplicate submit blocked: {task.rstrip(':')} -> Job: {job_id} (Assigned to {existing_user})", "WARN")
             return False, f"Already assigned to {existing_user}", existing_user
 
         timestamp = datetime.now().strftime("%d-%m-%Y %H:%M:%S")
@@ -814,15 +887,18 @@ def save_to_sheet2(task, job_id, load_id, lp_count, user_id):
             _count_cache.clear()
         else:
             invalidate_cache(SHEET2_NAME)
+        add_activity_log("TASK", f"Submitted '{task.rstrip(':')}' | Job: {job_id} | Loads: {load_id} | LPs: {lp_count} ({user_id})", "SUCCESS")
         return True, "Saved successfully!", None
     except Exception as e:
         print(f"Error saving to Sheet2: {e}")
+        add_activity_log("TASK", f"Submit exception: {task.rstrip(':')} -> Job: {job_id}: {e}", "ERROR")
         return False, str(e), None
 
 def delete_from_sheet(task, job_id, job_status, user_id):
     try:
         sheet, msg = connect_to_sheets()
         if not sheet:
+            add_activity_log("TASK", f"Delete failed (Offline): {task.rstrip(':')} -> Job: {job_id}", "ERROR", msg)
             return False, "Connection failed: " + str(msg)
         records = get_cached_records(force_refresh=False)
         if not records:
@@ -845,6 +921,7 @@ def delete_from_sheet(task, job_id, job_status, user_id):
                 break
 
         if row_to_delete is None:
+            add_activity_log("TASK", f"Delete failed: No matching record for Job {job_id} ({user_id})", "WARN")
             return False, "No matching record found for your User ID"
 
         try:
@@ -859,15 +936,18 @@ def delete_from_sheet(task, job_id, job_status, user_id):
             _count_cache.clear()
         else:
             invalidate_cache("sheet1")
+        add_activity_log("TASK", f"Deleted '{task.rstrip(':')}' | Job: {job_id} | Status: {job_status} ({user_id})", "SUCCESS")
         return True, "Deleted successfully"
     except Exception as e:
         print(f"Error deleting: {e}")
+        add_activity_log("TASK", f"Delete exception: {task.rstrip(':')} -> Job: {job_id}: {e}", "ERROR")
         return False, str(e)
 
 def delete_from_sheet2(task, job_id, user_id):
     try:
         sheet, msg = connect_to_sheets(force_refresh=False, sheet_name=SHEET2_NAME)
         if not sheet:
+            add_activity_log("TASK", f"Delete failed (Offline): {task.rstrip(':')} -> Job: {job_id}", "ERROR", msg)
             return False, "Connection failed: " + str(msg)
         records = get_cached_records(force_refresh=False, sheet_name=SHEET2_NAME)
         if not records:
@@ -888,6 +968,7 @@ def delete_from_sheet2(task, job_id, user_id):
                 break
 
         if row_to_delete is None:
+            add_activity_log("TASK", f"Delete failed: No matching record for Job {job_id} ({user_id})", "WARN")
             return False, "No matching record found for your User ID"
 
         try:
@@ -902,9 +983,11 @@ def delete_from_sheet2(task, job_id, user_id):
             _count_cache.clear()
         else:
             invalidate_cache(SHEET2_NAME)
+        add_activity_log("TASK", f"Deleted '{task.rstrip(':')}' | Job: {job_id} ({user_id})", "SUCCESS")
         return True, "Deleted successfully"
     except Exception as e:
         print(f"Error deleting from Sheet2: {e}")
+        add_activity_log("TASK", f"Delete exception: {task.rstrip(':')} -> Job: {job_id}: {e}", "ERROR")
         return False, str(e)
 
 
@@ -913,6 +996,17 @@ def delete_from_sheet2(task, job_id, user_id):
 # ==========================================
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+# Aurora Borealis palette — mirrors main_app.py
+AURORA_CYAN      = "#00e5ff"
+AURORA_CYAN_DARK = "#00c4d9"
+AURORA_MINT      = "#49cf9e"
+NAVY_BG          = "#0b1420"
+NAVY_CARD        = "#0d1b2a"
+NAVY_HOVER       = "#13233a"
+NAVY_ACTIVE      = "#162e4c"
+NAVY_BORDER      = "#142338"
+NAVY_BTN         = "#1a3a5c"
 
 
 # ==========================================
@@ -961,8 +1055,16 @@ class EFLApp:
         self.message_label = None
         self.status_dot = None
         self.status_label = None
+        self.status_pill = None
         self.connection_status = False
         self.is_loading = False
+        self.activity_log_window = None
+        self.last_latency_ms = None
+        self.log_filter_category = "All Events"
+
+        global _current_app_instance
+        _current_app_instance = self
+
         # Ensure local disk cache is in memory for 0s startup
         _load_local_disk_cache()
 
@@ -1014,7 +1116,7 @@ class EFLApp:
         if self.login_frame:
             self.login_frame.destroy()
 
-        self.login_frame = ctk.CTkFrame(self.container, fg_color="#12121e")
+        self.login_frame = ctk.CTkFrame(self.container, fg_color="#0b1420")
         self.login_frame.pack(fill=ctk.BOTH, expand=True)
 
         # Center Card Container
@@ -1022,7 +1124,7 @@ class EFLApp:
         center_container.place(relx=0.5, rely=0.5, anchor="center")
 
         # Header Brand Banner
-        header_card = ctk.CTkFrame(center_container, fg_color="#FF6B00", height=65, corner_radius=10, width=440)
+        header_card = ctk.CTkFrame(center_container, fg_color="#00e5ff", height=65, corner_radius=10, width=440)
         header_card.pack(fill=ctk.X, pady=(0, 15))
         header_card.pack_propagate(False)
 
@@ -1030,16 +1132,16 @@ class EFLApp:
             header_card,
             text="USER DATA MANAGER",
             font=ctk.CTkFont(size=19, weight="bold"),
-            text_color="white"
+            text_color="#0b1420"
         ).pack(expand=True)
 
         # Card Frame with border
         card = ctk.CTkFrame(
             center_container,
-            fg_color=("#ffffff", "#1a1a2e"),
+            fg_color="#0d1b2a",
             corner_radius=12,
             border_width=1,
-            border_color=("#d0d0d0", "#2d2d44"),
+            border_color="#142338",
             width=440,
             height=430
         )
@@ -1051,10 +1153,13 @@ class EFLApp:
             card,
             width=410,
             height=370,
-            segmented_button_selected_color="#FF6B00",
-            segmented_button_selected_hover_color="#e05d00",
-            segmented_button_unselected_color=("#e8e0d8", "#2b2b44"),
-            segmented_button_unselected_hover_color=("#d5cdc5", "#3d3d54")
+            segmented_button_selected_color="#00e5ff",
+            segmented_button_selected_hover_color="#00c4d9",
+            segmented_button_unselected_color="#13233a",
+            segmented_button_unselected_hover_color="#162e4c",
+            fg_color="#0d1b2a",
+            text_color="#ffffff",
+            segmented_button_fg_color="#13233a"
         )
         self.auth_tabview.pack(padx=15, pady=(10, 10), fill=ctk.BOTH, expand=True)
 
@@ -1066,7 +1171,7 @@ class EFLApp:
             tab_login,
             text="User ID",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
+            text_color="#e2e8f0"
         ).pack(anchor="w", padx=15, pady=(10, 3))
 
         registered_users = get_registered_users()
@@ -1077,11 +1182,12 @@ class EFLApp:
             values=registered_users if registered_users else [""],
             height=34,
             corner_radius=6,
-            fg_color=("#f5f5f5", "#2b2b44"),
-            border_color=("#cccccc", "#3d3d54"),
-            text_color=("#1a1a2e", "#e0e0e0"),
-            dropdown_fg_color=("#ffffff", "#2b2b44"),
-            dropdown_text_color=("#1a1a2e", "#e0e0e0")
+            fg_color="#13233a",
+            border_color="#142338",
+            text_color="#ffffff",
+            dropdown_fg_color="#0d1b2a",
+            dropdown_text_color="#ffffff",
+            dropdown_hover_color="#162e4c"
         )
         self.login_user_combo.set(default_user_val)
         self.login_user_combo.pack(fill=ctk.X, padx=15, pady=(0, 10))
@@ -1090,7 +1196,7 @@ class EFLApp:
             tab_login,
             text="Password",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
+            text_color="#e2e8f0"
         ).pack(anchor="w", padx=15, pady=(0, 3))
 
         pwd_row = ctk.CTkFrame(tab_login, fg_color="transparent")
@@ -1101,9 +1207,10 @@ class EFLApp:
             show="•",
             height=34,
             corner_radius=6,
-            fg_color=("#f5f5f5", "#2b2b44"),
-            border_color=("#cccccc", "#3d3d54"),
-            text_color=("#1a1a2e", "#e0e0e0"),
+            fg_color="#13233a",
+            border_color="#142338",
+            text_color="#ffffff",
+            placeholder_text_color="#64748b",
             placeholder_text="Enter password"
         )
         self.login_pass_entry.pack(side=ctk.LEFT, fill=ctk.X, expand=True, padx=(0, 8))
@@ -1120,9 +1227,9 @@ class EFLApp:
             width=55,
             height=34,
             corner_radius=6,
-            fg_color=("#e8e0d8", "#2b2b44"),
-            hover_color=("#d5cdc5", "#3d3d54"),
-            text_color=("#333333", "#e0e0e0"),
+            fg_color="#13233a",
+            hover_color="#162e4c",
+            text_color="#e2e8f0",
             font=ctk.CTkFont(size=11),
             command=toggle_login_pwd
         )
@@ -1135,8 +1242,10 @@ class EFLApp:
             text="Remember Login on this device",
             variable=self.remember_var,
             font=ctk.CTkFont(size=11),
-            fg_color="#FF6B00",
-            hover_color="#e05d00"
+            fg_color="#00e5ff",
+            hover_color="#00c4d9",
+            text_color="#e2e8f0",
+            checkmark_color="#0b1420"
         )
         remember_cb.pack(anchor="w", padx=15, pady=(0, 12))
 
@@ -1156,9 +1265,9 @@ class EFLApp:
             font=ctk.CTkFont(size=13, weight="bold"),
             height=36,
             corner_radius=6,
-            fg_color="#FF6B00",
-            hover_color="#e05d00",
-            text_color="white",
+            fg_color="#00e5ff",
+            hover_color="#00c4d9",
+            text_color="#0b1420",
             command=self.handle_login
         )
         btn_sign_in.pack(fill=ctk.X, padx=15, pady=(0, 5))
@@ -1172,16 +1281,17 @@ class EFLApp:
             tab_register,
             text="New User ID",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
+            text_color="#e2e8f0"
         ).pack(anchor="w", padx=15, pady=(5, 2))
 
         self.reg_user_entry = ctk.CTkEntry(
             tab_register,
             height=32,
             corner_radius=6,
-            fg_color=("#f5f5f5", "#2b2b44"),
-            border_color=("#cccccc", "#3d3d54"),
-            text_color=("#1a1a2e", "#e0e0e0"),
+            fg_color="#13233a",
+            border_color="#142338",
+            text_color="#ffffff",
+            placeholder_text_color="#64748b",
             placeholder_text="e.g. Akash, Chamara, John"
         )
         self.reg_user_entry.pack(fill=ctk.X, padx=15, pady=(0, 6))
@@ -1190,7 +1300,7 @@ class EFLApp:
             tab_register,
             text="New Password",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
+            text_color="#e2e8f0"
         ).pack(anchor="w", padx=15, pady=(0, 2))
 
         self.reg_pass_entry = ctk.CTkEntry(
@@ -1198,9 +1308,10 @@ class EFLApp:
             show="•",
             height=32,
             corner_radius=6,
-            fg_color=("#f5f5f5", "#2b2b44"),
-            border_color=("#cccccc", "#3d3d54"),
-            text_color=("#1a1a2e", "#e0e0e0"),
+            fg_color="#13233a",
+            border_color="#142338",
+            text_color="#ffffff",
+            placeholder_text_color="#64748b",
             placeholder_text="Enter password"
         )
         self.reg_pass_entry.pack(fill=ctk.X, padx=15, pady=(0, 6))
@@ -1209,7 +1320,7 @@ class EFLApp:
             tab_register,
             text="Confirm Password",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
+            text_color="#e2e8f0"
         ).pack(anchor="w", padx=15, pady=(0, 2))
 
         self.reg_confirm_entry = ctk.CTkEntry(
@@ -1217,9 +1328,10 @@ class EFLApp:
             show="•",
             height=32,
             corner_radius=6,
-            fg_color=("#f5f5f5", "#2b2b44"),
-            border_color=("#cccccc", "#3d3d54"),
-            text_color=("#1a1a2e", "#e0e0e0"),
+            fg_color="#13233a",
+            border_color="#142338",
+            text_color="#ffffff",
+            placeholder_text_color="#64748b",
             placeholder_text="Re-enter password"
         )
         self.reg_confirm_entry.pack(fill=ctk.X, padx=15, pady=(0, 8))
@@ -1366,12 +1478,12 @@ class EFLApp:
             self.main_frame.destroy()
 
         # Main Container
-        self.main_frame = ctk.CTkFrame(self.container, fg_color="#12121e")
+        self.main_frame = ctk.CTkFrame(self.container, fg_color="#060d17")
         self.main_frame.pack(fill=ctk.BOTH, expand=True)
 
         # Scrollable container so it fits on any screen height/width
-        self.content_frame = ctk.CTkScrollableFrame(self.main_frame, fg_color="transparent")
-        self.content_frame.pack(fill=ctk.BOTH, expand=True, padx=25, pady=15)
+        self.content_frame = ctk.CTkScrollableFrame(self.main_frame, fg_color="#060d17", scrollbar_button_color="#142236", scrollbar_button_hover_color="#1a2d47")
+        self.content_frame.pack(fill=ctk.BOTH, expand=True, padx=24, pady=16)
 
         # Reset collections
         self.count_labels = []
@@ -1388,6 +1500,7 @@ class EFLApp:
         self.setup_top_user_date_row(self.content_frame)
         self.setup_section1(self.content_frame)
         self.setup_section2(self.content_frame)
+        self.setup_live_activity_log(self.content_frame)
         self.setup_footer(self.content_frame)
 
         # Reset inputs
@@ -1437,20 +1550,36 @@ class EFLApp:
     # ==========================================================
     def update_status(self, is_connected):
         self.connection_status = is_connected
+        color = "#10b981" if is_connected else "#ef4444"
         if self.status_dot and self.status_dot.winfo_exists():
-            color = "#4CAF50" if is_connected else "#f44336"
             self.status_dot.configure(fg_color=color)
         if self.status_label and self.status_label.winfo_exists():
-            status_text = "Online" if is_connected else "Offline"
+            status_text = "Database connection synchronized" if is_connected else "Offline mode (cached)"
             self.status_label.configure(text=status_text)
+        if hasattr(self, 'inline_status_badge') and self.inline_status_badge and self.inline_status_badge.winfo_exists():
+            self.inline_status_badge.configure(
+                text="● Online (Synced)" if is_connected else "● Offline (Cached)",
+                text_color=color
+            )
+        if hasattr(self, 'inline_latency_label') and self.inline_latency_label and self.inline_latency_label.winfo_exists():
+            lat_text = f"⚡ {self.last_latency_ms} ms" if getattr(self, 'last_latency_ms', None) else "⚡ -- ms"
+            self.inline_latency_label.configure(text=lat_text)
+        if hasattr(self, 'modal_status_badge') and self.modal_status_badge and self.modal_status_badge.winfo_exists():
+            self.modal_status_badge.configure(
+                text="● Connected" if is_connected else "● Offline (Cached)",
+                text_color=color
+            )
 
     def check_connection_status(self):
         def check():
+            t0 = time.time()
             try:
                 sheet, msg = connect_to_sheets()
                 status = sheet is not None
+                self.last_latency_ms = max(1, int((time.time() - t0) * 1000))
             except Exception:
                 status = False
+            add_activity_log("CONNECTION", f"Heartbeat check: {'Online (Synchronized)' if status else 'Offline'}", "SUCCESS" if status else "WARN")
             self.root.after(0, lambda: self.update_status(status))
 
         threading.Thread(target=check, daemon=True).start()
@@ -1491,7 +1620,7 @@ class EFLApp:
     # RESET ALL INPUT FIELDS
     # ==========================================================
     def reset_all_inputs(self):
-        """Reset all dropdowns to '- Any -' and clear all entry boxes"""
+        """Reset all dropdowns to 'New' and clear all entry boxes"""
         for entry in self.all_entries:
             try:
                 if entry.winfo_exists():
@@ -1502,115 +1631,156 @@ class EFLApp:
         for dropdown in self.all_dropdowns:
             try:
                 if dropdown.winfo_exists():
-                    dropdown.set("- Any -")
+                    dropdown.set("New")
             except Exception as e:
                 print(f"Error resetting dropdown: {e}")
 
         self.root.update_idletasks()
 
     # ==========================================================
+    # ==========================================================
     # UI SETUP METHODS
     # ==========================================================
     def setup_header(self, parent=None):
         p = parent if parent is not None else self.main_frame
-        header_frame = ctk.CTkFrame(p, fg_color="#FF6B00", height=55, corner_radius=10)
-        header_frame.pack(fill=ctk.X, pady=(0, 15))
-        header_frame.pack_propagate(False)
+        header_container = ctk.CTkFrame(p, fg_color="transparent")
+        header_container.pack(fill=ctk.X, pady=(0, 16))
+
+        # LEFT: Title & Subtitle
+        title_box = ctk.CTkFrame(header_container, fg_color="transparent")
+        title_box.pack(side=ctk.LEFT, anchor="w")
 
         ctk.CTkLabel(
-            header_frame,
-            text="USER DATA MANAGER",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color="white"
+            title_box,
+            text="User Data Manager",
+            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
+            text_color="#ffffff",
+            anchor="w"
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            title_box,
+            text="Configure reconciliations, load transfers, and data allocations",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color="#64748b",
+            anchor="w"
+        ).pack(anchor="w", pady=(2, 0))
+
+        # RIGHT: Profile & Date Controls
+        controls_box = ctk.CTkFrame(header_container, fg_color="transparent")
+        controls_box.pack(side=ctk.RIGHT, anchor="e")
+
+        # 1. User Profile Pill
+        user_name = self.current_user or "User"
+        initial = (user_name[0] if user_name else "U").upper()
+
+        user_pill = ctk.CTkFrame(
+            controls_box,
+            fg_color="#0a121e",
+            border_width=1,
+            border_color="#182a44",
+            corner_radius=8,
+            height=34
+        )
+        user_pill.pack(side=ctk.RIGHT, padx=(10, 0))
+        user_pill.pack_propagate(False)
+
+        # Avatar circle
+        avatar_frame = ctk.CTkFrame(
+            user_pill,
+            fg_color="#0284c7",
+            corner_radius=11,
+            width=22,
+            height=22
+        )
+        avatar_frame.pack(side=ctk.LEFT, padx=(6, 6), pady=6)
+        avatar_frame.pack_propagate(False)
+
+        ctk.CTkLabel(
+            avatar_frame,
+            text=initial,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color="#ffffff"
         ).pack(expand=True)
 
-    def setup_top_user_date_row(self, parent=None):
-        p = parent if parent is not None else self.main_frame
-        top_row = ctk.CTkFrame(p, fg_color="transparent")
-        top_row.pack(fill=ctk.X, pady=(0, 10))
-
-        top_row.grid_columnconfigure(0, weight=1)
-        top_row.grid_columnconfigure(1, weight=2)
-        top_row.grid_columnconfigure(2, weight=1)
-
-        # LEFT: User ID & Logout Button
-        user_frame = ctk.CTkFrame(top_row, fg_color="transparent")
-        user_frame.grid(row=0, column=0, sticky="w", padx=(0, 10))
-
-        ctk.CTkLabel(
-            user_frame,
-            text="User ID:",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
-        ).pack(side=ctk.LEFT, padx=(0, 6))
-
-        user_badge = ctk.CTkFrame(user_frame, fg_color=("#e8e0d8", "#2b2b44"), corner_radius=6)
-        user_badge.pack(side=ctk.LEFT, padx=(0, 8))
-
         self.username_value = ctk.CTkLabel(
-            user_badge,
-            text=self.current_user or "User",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#1a237e", "#64b5f6"),
-            padx=8,
-            pady=3
+            user_pill,
+            text=user_name,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#ffffff"
         )
-        self.username_value.pack(side=ctk.LEFT)
+        self.username_value.pack(side=ctk.LEFT, padx=(0, 8))
 
         logout_btn = ctk.CTkButton(
-            user_frame,
-            text="Logout",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            width=55,
-            height=26,
-            corner_radius=6,
-            fg_color=("#d0d0d0", "#2d2d44"),
-            hover_color=("#f44336", "#d32f2f"),
-            text_color=("#333333", "#e0e0e0"),
+            user_pill,
+            text="[→",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            width=22,
+            height=22,
+            corner_radius=4,
+            fg_color="transparent",
+            hover_color="#dc2626",
+            text_color="#94a3b8",
             command=self.logout
         )
-        logout_btn.pack(side=ctk.LEFT)
+        logout_btn.pack(side=ctk.LEFT, padx=(0, 6))
 
-        # CENTER: Message Label
-        self.message_label = ctk.CTkLabel(
-            top_row,
-            text="",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color="#4CAF50",
-            anchor="center"
+        # 2. Date Selector Pill
+        self.date_pill = ctk.CTkFrame(
+            controls_box,
+            fg_color="#0a121e",
+            border_width=1,
+            border_color="#182a44",
+            corner_radius=8,
+            height=34,
+            cursor="hand2"
         )
-        self.message_label.grid(row=0, column=1, sticky="ew", padx=10)
+        self.date_pill.pack(side=ctk.RIGHT)
+        self.date_pill.pack_propagate(False)
 
-        # RIGHT: Date Selector
-        date_frame = ctk.CTkFrame(top_row, fg_color="transparent")
-        date_frame.grid(row=0, column=2, sticky="e")
-
-        ctk.CTkLabel(
-            date_frame,
-            text="Date:",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
-        ).pack(side=ctk.LEFT, padx=(0, 10))
+        date_icon = ctk.CTkLabel(
+            self.date_pill,
+            text="🗓",
+            font=ctk.CTkFont(size=12),
+            text_color="#94a3b8",
+            cursor="hand2"
+        )
+        date_icon.pack(side=ctk.LEFT, padx=(8, 5))
 
         self.date_label = ctk.CTkLabel(
-            date_frame,
+            self.date_pill,
             text=self.selected_date.strftime("%d-%m-%Y"),
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=("#1a237e", "#64b5f6"),
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#ffffff",
             cursor="hand2"
         )
         self.date_label.pack(side=ctk.LEFT, padx=(0, 5))
-        self.date_label.bind("<Button-1>", lambda e: self.toggle_dropdown_popup())
 
         self.date_arrow = ctk.CTkLabel(
-            date_frame,
+            self.date_pill,
             text="▼",
-            font=ctk.CTkFont(size=11),
-            text_color=("#666666", "#888888"),
+            font=ctk.CTkFont(size=8),
+            text_color="#64748b",
             cursor="hand2"
         )
-        self.date_arrow.pack(side=ctk.LEFT)
-        self.date_arrow.bind("<Button-1>", lambda e: self.toggle_dropdown_popup())
+        self.date_arrow.pack(side=ctk.LEFT, padx=(0, 8))
+
+        # Bindings for calendar popup
+        for w in (self.date_pill, date_icon, self.date_label, self.date_arrow):
+            w.bind("<Button-1>", lambda e: self.toggle_dropdown_popup())
+
+        # CENTER: Message Banner (Inline Toast)
+        self.message_label = ctk.CTkLabel(
+            header_container,
+            text="",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color="#10b981",
+            anchor="center"
+        )
+        self.message_label.pack(side=ctk.LEFT, expand=True, padx=10)
+
+    def setup_top_user_date_row(self, parent=None):
+        pass  # Integrated into setup_header
 
     def toggle_dropdown_popup(self):
         if self.popup is not None and self.popup.winfo_exists():
@@ -1653,26 +1823,26 @@ class EFLApp:
             for widget in popup_frame.winfo_children():
                 widget.destroy()
 
-            nav_container = ctk.CTkFrame(popup_frame, fg_color="#2d2d44", corner_radius=6, height=34)
+            nav_container = ctk.CTkFrame(popup_frame, fg_color="#101c2e", corner_radius=6, height=34)
             nav_container.pack(fill=ctk.X, pady=(10, 8), padx=6)
             nav_container.pack_propagate(False)
 
             prev_btn = ctk.CTkButton(
-                nav_container, text="◀", width=30, height=26, fg_color="#3d3d54",
-                text_color="#e0e0e0", hover_color="#4d4d64", corner_radius=4, font=ctk.CTkFont(size=12),
+                nav_container, text="◀", width=30, height=26, fg_color="#162a45",
+                text_color="#ffffff", hover_color="#1e3a5f", corner_radius=4, font=ctk.CTkFont(size=12),
                 command=lambda: navigate_month(-1)
             )
             prev_btn.pack(side=ctk.LEFT, padx=(6, 4))
 
             month_year_label = ctk.CTkLabel(
                 nav_container, text=f"{calendar.month_name[month]} {year}",
-                font=ctk.CTkFont(size=13, weight="bold"), text_color="#e0e0e0"
+                font=ctk.CTkFont(size=13, weight="bold"), text_color="#ffffff"
             )
             month_year_label.pack(side=ctk.LEFT, expand=True)
 
             next_btn = ctk.CTkButton(
-                nav_container, text="▶", width=30, height=26, fg_color="#3d3d54",
-                text_color="#e0e0e0", hover_color="#4d4d64", corner_radius=4, font=ctk.CTkFont(size=12),
+                nav_container, text="▶", width=30, height=26, fg_color="#162a45",
+                text_color="#ffffff", hover_color="#1e3a5f", corner_radius=4, font=ctk.CTkFont(size=12),
                 command=lambda: navigate_month(1)
             )
             next_btn.pack(side=ctk.RIGHT, padx=(4, 6))
@@ -1683,7 +1853,7 @@ class EFLApp:
             for day in day_names:
                 ctk.CTkLabel(
                     day_frame, text=day, font=ctk.CTkFont(size=9, weight="bold"),
-                    text_color=("#666666", "#888888"), width=30, anchor="center"
+                    text_color="#94a3b8", width=30, anchor="center"
                 ).pack(side=ctk.LEFT, padx=1)
 
             cal = calendar.monthcalendar(year, month)
@@ -1706,9 +1876,9 @@ class EFLApp:
                         btn = ctk.CTkButton(
                             week_frame, text=str(day), width=30, height=26,
                             font=ctk.CTkFont(size=10, weight="bold"),
-                            fg_color="#4CAF50" if is_selected else ("#FF6B00" if is_today else ("#e8e0d8" if not is_future else "#f0f0f0")),
-                            text_color="white" if (is_selected or is_today) else ("#333333" if not is_future else "#999999"),
-                            hover_color="#45a049" if not is_future else "#f0f0f0",
+                            fg_color="#00e5ff" if is_selected else ("#10b981" if is_today else ("#101c2e" if not is_future else "#08101c")),
+                            text_color="#060d17" if (is_selected or is_today) else ("#ffffff" if not is_future else "#475569"),
+                            hover_color="#00c4d9" if not is_future else "#08101c",
                             state="disabled" if is_future else "normal",
                             command=lambda d=day: select_date(year, month, d)
                         )
@@ -1718,13 +1888,13 @@ class EFLApp:
             bottom_frame.pack(fill=ctk.X, pady=(10, 10))
             today_btn = ctk.CTkButton(
                 bottom_frame, text="Today", font=ctk.CTkFont(size=10, weight="bold"),
-                fg_color="#4CAF50", hover_color="#45a049", height=26, width=65,
+                fg_color="#10b981", hover_color="#059669", height=26, width=65, text_color="#060d17",
                 command=lambda: select_date(today.year, today.month, today.day)
             )
             today_btn.pack(side=ctk.LEFT, padx=(6, 0))
             close_btn = ctk.CTkButton(
-                bottom_frame, text="Close", font=ctk.CTkFont(size=10), fg_color="#f44336",
-                hover_color="#d32f2f", height=26, width=65, command=self.close_popup_safely
+                bottom_frame, text="Close", font=ctk.CTkFont(size=10), fg_color="#ef4444",
+                hover_color="#dc2626", height=26, width=65, command=self.close_popup_safely
             )
             close_btn.pack(side=ctk.RIGHT, padx=(0, 6))
 
@@ -1739,10 +1909,9 @@ class EFLApp:
                 current_year -= 1
             build_calendar(current_year, current_month)
 
-        popup_frame = ctk.CTkFrame(self.popup, fg_color=("#ffffff", "#1a1a2e"), corner_radius=6)
+        popup_frame = ctk.CTkFrame(self.popup, fg_color="#0c182b", corner_radius=6, border_width=1, border_color="#182a44")
         popup_frame.pack(fill=ctk.BOTH, expand=True)
         build_calendar(current_year, current_month)
-        self.date_label.configure(text_color="#4CAF50")
 
         def on_global_click(event):
             if self.popup is not None and self.popup.winfo_exists():
@@ -1752,10 +1921,11 @@ class EFLApp:
                     pw = self.popup.winfo_width()
                     ph = self.popup.winfo_height()
                     if not (px <= event.x_root <= px + pw and py <= event.y_root <= py + ph):
-                        dlx = self.date_label.winfo_rootx()
-                        dly = self.date_label.winfo_rooty()
-                        dlw = self.date_label.winfo_width() + 30
-                        dlh = self.date_label.winfo_height()
+                        target = getattr(self, 'date_pill', self.date_label)
+                        dlx = target.winfo_rootx()
+                        dly = target.winfo_rooty()
+                        dlw = target.winfo_width() + 20
+                        dlh = target.winfo_height()
                         if not (dlx <= event.x_root <= dlx + dlw and dly <= event.y_root <= dly + dlh):
                             self.close_popup_safely()
                 except Exception:
@@ -1773,14 +1943,13 @@ class EFLApp:
         if self.popup is not None and self.popup.winfo_exists():
             self.popup.destroy()
             self.popup = None
-            if hasattr(self, 'date_label') and self.date_label.winfo_exists():
-                self.date_label.configure(text_color=("#1a237e", "#64b5f6"))
 
     def position_popup(self, event=None):
         if self.popup is not None and self.popup.winfo_exists():
             try:
-                x = self.date_label.winfo_rootx() - 70
-                y = self.date_label.winfo_rooty() + 30
+                target = getattr(self, 'date_pill', self.date_label)
+                x = target.winfo_rootx() - 70
+                y = target.winfo_rooty() + 38
                 screen_width = self.root.winfo_screenwidth()
                 screen_height = self.root.winfo_screenheight()
                 popup_width = 240
@@ -1791,7 +1960,7 @@ class EFLApp:
                 if x < 10:
                     x = 10
                 if y + popup_height > screen_height:
-                    y = self.date_label.winfo_rooty() - popup_height - 10
+                    y = target.winfo_rooty() - popup_height - 10
                 self.popup.geometry(f"+{int(x)}+{int(y)}")
             except Exception:
                 pass
@@ -1843,7 +2012,7 @@ class EFLApp:
             for task_name in self.all_task_names:
                 val = counts_map.get(task_name)
                 if isinstance(val, list):
-                    counts.append(f"{val[0]}-{val[1]}")
+                    counts.append(f"{val[0]} - {val[1]}")
                 elif val is not None:
                     counts.append(f"{val}")
                 else:
@@ -1865,70 +2034,103 @@ class EFLApp:
 
     def setup_section1(self, parent=None):
         p = parent if parent is not None else self.main_frame
-        section_frame = ctk.CTkFrame(p, fg_color=("#ffffff", "#1a1a2e"), corner_radius=8, border_width=1, border_color=("#d0d0d0", "#2d2d44"))
-        section_frame.pack(pady=10, fill=ctk.X)
+        section_frame = ctk.CTkFrame(p, fg_color="#0a121e", corner_radius=10, border_width=1, border_color="#142236")
+        section_frame.pack(pady=(0, 12), fill=ctk.X)
 
-        input_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-        input_frame.pack(pady=10, padx=10, fill=ctk.X)
+        # Table Column Headers
+        col_header = ctk.CTkFrame(section_frame, fg_color="transparent")
+        col_header.pack(fill=ctk.X, padx=16, pady=(10, 6))
 
-        tasks = ["GDN Reconciliation:", "GRN Reconciliation:", "GDN Creation:", "GRN Creation:", "Load Plan or Asn:"]
-        for task in tasks:
-            self.create_dropdown_row(input_frame, task)
+        ctk.CTkLabel(col_header, text="Process Name", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=180, anchor="w").pack(side=ctk.LEFT, padx=(0, 10))
+        ctk.CTkLabel(col_header, text="Reference / Batch Identifier", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=250, anchor="w").pack(side=ctk.LEFT, padx=(0, 10))
+        ctk.CTkLabel(col_header, text="Category Filter", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=130, anchor="w").pack(side=ctk.LEFT, padx=(0, 15))
+        ctk.CTkLabel(col_header, text="Counter", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=50, anchor="center").pack(side=ctk.LEFT, padx=(0, 15))
+        ctk.CTkLabel(col_header, text="Actions", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=105, anchor="center").pack(side=ctk.LEFT)
 
-    def create_dropdown_row(self, parent, label_text):
-        self.all_task_names.append(label_text)
+        # Task Rows
+        tasks_config = [
+            ("GDN Reconciliation", "GDN Reconciliation:", "Enter GDN Identifier..."),
+            ("GRN Reconciliation", "GRN Reconciliation:", "Enter GRN Identifier..."),
+            ("GDN Creation", "GDN Creation:", "Enter Order Ref..."),
+            ("GRN Creation", "GRN Creation:", "Enter Inbound Batch..."),
+            ("Load Plan or ASN", "Load Plan or Asn:", "Enter ASN Number...")
+        ]
+        for display_name, task_key, placeholder in tasks_config:
+            self.create_dropdown_row(section_frame, display_name, task_key, placeholder)
 
-        row_frame = ctk.CTkFrame(parent, fg_color="transparent", height=35)
-        row_frame.pack(pady=3, fill=ctk.X)
+        ctk.CTkFrame(section_frame, fg_color="transparent", height=6).pack()
+
+    def create_dropdown_row(self, parent, display_name, task_key, placeholder):
+        self.all_task_names.append(task_key)
+
+        row_frame = ctk.CTkFrame(parent, fg_color="transparent", height=38)
+        row_frame.pack(fill=ctk.X, padx=16, pady=3)
         row_frame.pack_propagate(False)
 
+        # Process Name
         ctk.CTkLabel(
-            row_frame, text=label_text, font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0"), width=160, anchor="w"
+            row_frame, text=display_name, font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#f1f5f9", width=180, anchor="w"
         ).pack(side=ctk.LEFT, padx=(0, 10))
 
+        # Identifier Entry
         entry = ctk.CTkEntry(
-            row_frame, font=ctk.CTkFont(size=11), width=180, height=32, corner_radius=6,
-            border_width=1, fg_color=("#ffffff", "#2b2b44"), text_color=("#1a1a2e", "#e0e0e0"),
-            placeholder_text="Enter Job ID"
+            row_frame, font=ctk.CTkFont(family="Segoe UI", size=11), width=250, height=32, corner_radius=6,
+            border_width=1, fg_color="#060d17", border_color="#182a44", text_color="#ffffff",
+            placeholder_text_color="#475569", placeholder_text=placeholder
         )
         entry.pack(side=ctk.LEFT, padx=(0, 10))
         self.all_entries.append(entry)
 
-        options = ["- Any -", "New", "Revise", "Separate"]
-        if label_text in ["GDN Reconciliation:", "GRN Reconciliation:", "Load Plan or Asn:"]:
-            options = ["- Any -", "New", "Revise"]
+        # Category Dropdown
+        options = ["New", "Revise", "Separate"]
+        if task_key in ["GDN Reconciliation:", "GRN Reconciliation:", "Load Plan or Asn:"]:
+            options = ["New", "Revise"]
 
         dropdown = ctk.CTkOptionMenu(
-            row_frame, values=options, font=ctk.CTkFont(size=11), width=140, height=32,
-            corner_radius=6, fg_color=("#ffffff", "#2b2b44"), button_color=("#e8e0d8", "#3d3d54"),
-            button_hover_color=("#d5cdc5", "#4d4d64"), text_color=("#1a1a2e", "#e0e0e0"))
+            row_frame, values=options, font=ctk.CTkFont(family="Segoe UI", size=11), width=130, height=32,
+            corner_radius=6, fg_color="#060d17", button_color="#0d1b2a",
+            button_hover_color="#162e4c", text_color="#ffffff",
+            dropdown_fg_color="#0c182b", dropdown_text_color="#ffffff",
+            dropdown_hover_color="#162e4c"
+        )
         dropdown.pack(side=ctk.LEFT, padx=(0, 15))
-        dropdown.set("- Any -")
+        dropdown.set("New")
         self.all_dropdowns.append(dropdown)
 
-        submit_btn = ctk.CTkButton(
-            row_frame, text="Submit", font=ctk.CTkFont(size=11, weight="bold"), width=65,
-            height=32, corner_radius=6, fg_color="#4CAF50", hover_color="#45a049",
-            command=lambda: self.submit_action_sheet1(entry, dropdown, label_text)
+        # Counter Badge
+        count_container = ctk.CTkFrame(row_frame, fg_color="#060d17", border_width=1, border_color="#182a44", corner_radius=6, width=50, height=30)
+        count_container.pack(side=ctk.LEFT, padx=(0, 15))
+        count_container.pack_propagate(False)
+
+        count_label = ctk.CTkLabel(
+            count_container, text="0", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#ffffff"
         )
-        submit_btn.pack(side=ctk.LEFT, padx=(5, 5))
+        count_label.pack(expand=True)
+        self.count_labels.append(count_label)
+
+        # Actions
+        actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=105, height=32)
+        actions_frame.pack(side=ctk.LEFT)
+        actions_frame.pack_propagate(False)
+
+        submit_btn = ctk.CTkButton(
+            actions_frame, text="Submit", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), width=60,
+            height=30, corner_radius=6, fg_color="#059669", hover_color="#047857", text_color="#ffffff",
+            command=lambda: self.submit_action_sheet1(entry, dropdown, task_key)
+        )
+        submit_btn.pack(side=ctk.LEFT, padx=(0, 6))
         self.all_buttons.append(submit_btn)
 
         delete_btn = ctk.CTkButton(
-            row_frame, text="Delete", font=ctk.CTkFont(size=11, weight="bold"), width=65,
-            height=32, corner_radius=6, fg_color="#f44336", hover_color="#d32f2f",
-            command=lambda: self.delete_action_sheet1(entry, dropdown, label_text)
+            actions_frame, text="🗑", font=ctk.CTkFont(family="Segoe UI", size=12), width=32,
+            height=30, corner_radius=6, fg_color="#101c2e", hover_color="#dc2626", border_width=1, border_color="#182a44",
+            text_color="#94a3b8",
+            command=lambda: self.delete_action_sheet1(entry, dropdown, task_key)
         )
-        delete_btn.pack(side=ctk.LEFT, padx=(0, 5))
+        delete_btn.pack(side=ctk.LEFT)
         self.all_buttons.append(delete_btn)
-
-        count_label = ctk.CTkLabel(
-            row_frame, text="0", font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("#333333", "#e0e0e0"), width=60, anchor="w"
-        )
-        count_label.pack(side=ctk.LEFT, padx=(15, 0))
-        self.count_labels.append(count_label)
 
     def submit_action_sheet1(self, entry, dropdown, label_text):
         if not self.is_edit_mode_enabled:
@@ -1939,7 +2141,7 @@ class EFLApp:
         job_status = dropdown.get()
         user_id = self.current_user or (self.username_value.cget("text") if self.username_value and self.username_value.winfo_exists() else "")
 
-        if not job_id or job_status == "- Any -":
+        if not job_id or not job_status:
             self.show_message("Enter Job ID & Status", "warning")
             return
 
@@ -1951,7 +2153,7 @@ class EFLApp:
             def update_ui():
                 if success:
                     entry.delete(0, "end")
-                    dropdown.set("- Any -")
+                    dropdown.set("New")
                     self.update_all_counts()
                     self.show_message("Saved!", "success")
                     self.update_status(True)
@@ -1975,7 +2177,7 @@ class EFLApp:
         job_status = dropdown.get()
         user_id = self.current_user or (self.username_value.cget("text") if self.username_value and self.username_value.winfo_exists() else "")
 
-        if not job_id or job_status == "- Any -":
+        if not job_id or not job_status:
             self.show_message("Enter Job ID & Status", "warning")
             return
 
@@ -1987,7 +2189,7 @@ class EFLApp:
             def update_ui():
                 if success:
                     entry.delete(0, "end")
-                    dropdown.set("- Any -")
+                    dropdown.set("New")
                     self.update_all_counts()
                     self.show_message("Deleted!", "success")
                     self.update_status(True)
@@ -2001,74 +2203,90 @@ class EFLApp:
 
     def setup_section2(self, parent=None):
         p = parent if parent is not None else self.main_frame
-        section_frame = ctk.CTkFrame(p, fg_color=("#ffffff", "#1a1a2e"), corner_radius=8, border_width=1, border_color=("#d0d0d0", "#2d2d44"))
-        section_frame.pack(pady=10, fill=ctk.X)
+        section_frame = ctk.CTkFrame(p, fg_color="#0a121e", corner_radius=10, border_width=1, border_color="#142236")
+        section_frame.pack(pady=(0, 12), fill=ctk.X)
 
-        input_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
-        input_frame.pack(pady=10, padx=10, fill=ctk.X)
+        # Table Column Headers
+        col_header = ctk.CTkFrame(section_frame, fg_color="transparent")
+        col_header.pack(fill=ctk.X, padx=16, pady=(10, 6))
 
-        tasks = ["Load Transfer:", "Load Audit:", "Shipping:", "Allocation/Backorders:"]
-        for task in tasks:
-            self.create_textbox_row(input_frame, task)
+        ctk.CTkLabel(col_header, text="Operation Mode", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=180, anchor="w").pack(side=ctk.LEFT, padx=(0, 10))
+        ctk.CTkLabel(col_header, text="Parameter 1", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=120, anchor="w").pack(side=ctk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(col_header, text="Parameter 2", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=120, anchor="w").pack(side=ctk.LEFT, padx=(0, 8))
+        ctk.CTkLabel(col_header, text="Parameter 3", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=120, anchor="w").pack(side=ctk.LEFT, padx=(0, 12))
+        ctk.CTkLabel(col_header, text="Ratio", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=60, anchor="center").pack(side=ctk.LEFT, padx=(0, 15))
+        ctk.CTkLabel(col_header, text="Actions", font=ctk.CTkFont(family="Segoe UI", size=9, weight="bold"), text_color="#64748b", width=105, anchor="center").pack(side=ctk.LEFT)
 
-    def create_textbox_row(self, parent, label_text):
-        self.all_task_names.append(label_text)
+        # Task Rows
+        tasks_config2 = [
+            ("Load Transfer", "Load Transfer:", ["Origin ID", "Target ID", "Lane/Bay"]),
+            ("Load Audit", "Load Audit:", ["Audit Key", "Inspector", "Checkpoint"]),
+            ("Shipping", "Shipping:", ["Manifest #", "Carrier", "Dock Door"]),
+            ("Allocation / Backorders", "Allocation/Backorders:", ["SKU Code", "Qty Allocated", "Priority Flag"])
+        ]
+        for display_name, task_key, placeholders in tasks_config2:
+            self.create_textbox_row(section_frame, display_name, task_key, placeholders)
 
-        row_frame = ctk.CTkFrame(parent, fg_color="transparent", height=35)
-        row_frame.pack(pady=3, fill=ctk.X)
+        ctk.CTkFrame(section_frame, fg_color="transparent", height=6).pack()
+
+    def create_textbox_row(self, parent, display_name, task_key, placeholders):
+        self.all_task_names.append(task_key)
+
+        row_frame = ctk.CTkFrame(parent, fg_color="transparent", height=38)
+        row_frame.pack(fill=ctk.X, padx=16, pady=3)
         row_frame.pack_propagate(False)
 
+        # Operation Mode
         ctk.CTkLabel(
-            row_frame, text=label_text, font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0"), width=190, anchor="w"
+            row_frame, text=display_name, font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#f1f5f9", width=180, anchor="w"
         ).pack(side=ctk.LEFT, padx=(0, 10))
 
-        entry1 = ctk.CTkEntry(
-            row_frame, font=ctk.CTkFont(size=11), width=100, height=32, corner_radius=6,
-            border_width=1, fg_color=("#ffffff", "#2b2b44"), text_color=("#1a1a2e", "#e0e0e0"),
-            placeholder_text="Job ID"
-        )
-        entry1.pack(side=ctk.LEFT, padx=(0, 10))
-        self.all_entries.append(entry1)
+        # 3 Parameter Entries
+        entries = []
+        for i, ph in enumerate(placeholders):
+            e = ctk.CTkEntry(
+                row_frame, font=ctk.CTkFont(family="Segoe UI", size=11), width=120, height=32, corner_radius=6,
+                border_width=1, fg_color="#060d17", border_color="#182a44", text_color="#ffffff",
+                placeholder_text_color="#475569", placeholder_text=ph
+            )
+            e.pack(side=ctk.LEFT, padx=(0, 8 if i < 2 else 12))
+            self.all_entries.append(e)
+            entries.append(e)
 
-        entry2 = ctk.CTkEntry(
-            row_frame, font=ctk.CTkFont(size=11), width=90, height=32, corner_radius=6,
-            border_width=1, fg_color=("#ffffff", "#2b2b44"), text_color=("#1a1a2e", "#e0e0e0"),
-            placeholder_text="Load ID Count"
-        )
-        entry2.pack(side=ctk.LEFT, padx=(0, 10))
-        self.all_entries.append(entry2)
+        # Ratio Badge
+        ratio_container = ctk.CTkFrame(row_frame, fg_color="#060d17", border_width=1, border_color="#182a44", corner_radius=6, width=60, height=30)
+        ratio_container.pack(side=ctk.LEFT, padx=(0, 15))
+        ratio_container.pack_propagate(False)
 
-        entry3 = ctk.CTkEntry(
-            row_frame, font=ctk.CTkFont(size=11), width=90, height=32, corner_radius=6,
-            border_width=1, fg_color=("#ffffff", "#2b2b44"), text_color=("#1a1a2e", "#e0e0e0"),
-            placeholder_text="LP Count"
+        count_label = ctk.CTkLabel(
+            ratio_container, text="0 - 0", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#ffffff"
         )
-        entry3.pack(side=ctk.LEFT, padx=(0, 10))
-        self.all_entries.append(entry3)
+        count_label.pack(expand=True)
+        self.count_labels.append(count_label)
+
+        # Actions
+        actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=105, height=32)
+        actions_frame.pack(side=ctk.LEFT)
+        actions_frame.pack_propagate(False)
 
         submit_btn = ctk.CTkButton(
-            row_frame, text="Submit", font=ctk.CTkFont(size=11, weight="bold"), width=65,
-            height=32, corner_radius=6, fg_color="#4CAF50", hover_color="#45a049",
-            command=lambda: self.submit_action_sheet2([entry1, entry2, entry3], label_text)
+            actions_frame, text="Submit", font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"), width=60,
+            height=30, corner_radius=6, fg_color="#059669", hover_color="#047857", text_color="#ffffff",
+            command=lambda: self.submit_action_sheet2(entries, task_key)
         )
-        submit_btn.pack(side=ctk.LEFT, padx=(5, 5))
+        submit_btn.pack(side=ctk.LEFT, padx=(0, 6))
         self.all_buttons.append(submit_btn)
 
         delete_btn = ctk.CTkButton(
-            row_frame, text="Delete", font=ctk.CTkFont(size=11, weight="bold"), width=65,
-            height=32, corner_radius=6, fg_color="#f44336", hover_color="#d32f2f",
-            command=lambda: self.delete_action_sheet2([entry1, entry2, entry3], label_text)
+            actions_frame, text="🗑", font=ctk.CTkFont(family="Segoe UI", size=12), width=32,
+            height=30, corner_radius=6, fg_color="#101c2e", hover_color="#dc2626", border_width=1, border_color="#182a44",
+            text_color="#94a3b8",
+            command=lambda: self.delete_action_sheet2(entries, task_key)
         )
-        delete_btn.pack(side=ctk.LEFT, padx=(0, 5))
+        delete_btn.pack(side=ctk.LEFT)
         self.all_buttons.append(delete_btn)
-
-        count_label = ctk.CTkLabel(
-            row_frame, text="0-0", font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=("#333333", "#e0e0e0"), width=60, anchor="w"
-        )
-        count_label.pack(side=ctk.LEFT, padx=(15, 0))
-        self.count_labels.append(count_label)
 
     def submit_action_sheet2(self, entries, label_text):
         if not self.is_edit_mode_enabled:
@@ -2158,52 +2376,257 @@ class EFLApp:
 
         threading.Thread(target=task_thread, daemon=True).start()
 
+    # ==========================================
+    # INTEGRATED LIVE ACTIVITY LOG COMPONENT
+    # ==========================================
+    def setup_live_activity_log(self, parent=None):
+        p = parent if parent is not None else self.main_frame
+        log_card = ctk.CTkFrame(p, fg_color="#0a121e", corner_radius=10, border_width=1, border_color="#142236")
+        log_card.pack(pady=(0, 10), fill=ctk.BOTH, expand=True)
+
+        # Top Control / Header Bar of Activity Log
+        log_header = ctk.CTkFrame(log_card, fg_color="transparent")
+        log_header.pack(fill=ctk.X, padx=16, pady=(10, 8))
+
+        # Left Info & Status
+        hdr_left = ctk.CTkFrame(log_header, fg_color="transparent")
+        hdr_left.pack(side=ctk.LEFT)
+
+        ctk.CTkLabel(
+            hdr_left, text="●", font=ctk.CTkFont(size=11), text_color="#00e5ff"
+        ).pack(side=ctk.LEFT, padx=(0, 8))
+
+        ctk.CTkLabel(
+            hdr_left, text="LIVE ACTIVITY & CONNECTION LOG",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color="#e2e8f0"
+        ).pack(side=ctk.LEFT, padx=(0, 12))
+
+        # Inline status pill
+        status_color = "#10b981" if self.connection_status else "#ef4444"
+        status_txt = "● Online (Synced)" if self.connection_status else "● Offline (Cached)"
+        self.inline_status_badge = ctk.CTkLabel(
+            hdr_left, text=status_txt,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color=status_color
+        )
+        self.inline_status_badge.pack(side=ctk.LEFT, padx=(0, 10))
+
+        # Inline latency
+        lat_text = f"⚡ {self.last_latency_ms} ms" if getattr(self, 'last_latency_ms', None) else "⚡ -- ms"
+        self.inline_latency_label = ctk.CTkLabel(
+            hdr_left, text=lat_text,
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color="#64748b"
+        )
+        self.inline_latency_label.pack(side=ctk.LEFT, padx=(0, 10))
+
+        # Right Action Buttons
+        hdr_right = ctk.CTkFrame(log_header, fg_color="transparent")
+        hdr_right.pack(side=ctk.RIGHT)
+
+        # Test Connection button
+        self.inline_test_btn = ctk.CTkButton(
+            hdr_right, text="🔄 Test Connection",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            width=120, height=28, corner_radius=6,
+            fg_color="#059669", hover_color="#047857", text_color="#ffffff",
+            command=self._run_live_connection_test
+        )
+        self.inline_test_btn.pack(side=ctk.LEFT, padx=(0, 6))
+
+        # Copy button
+        copy_btn = ctk.CTkButton(
+            hdr_right, text="📋 Copy",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            width=65, height=28, corner_radius=6,
+            fg_color="#101c2e", hover_color="#182a44", border_width=1, border_color="#182a44", text_color="#94a3b8",
+            command=self._copy_activity_log
+        )
+        copy_btn.pack(side=ctk.LEFT, padx=(0, 6))
+
+        # Clear button
+        clear_btn = ctk.CTkButton(
+            hdr_right, text="🗑 Clear",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            width=58, height=28, corner_radius=6,
+            fg_color="#101c2e", hover_color="#dc2626", border_width=1, border_color="#182a44", text_color="#94a3b8",
+            command=self._clear_activity_log
+        )
+        clear_btn.pack(side=ctk.LEFT, padx=(0, 8))
+
+        # Filter dropdown
+        self.inline_filter_menu = ctk.CTkOptionMenu(
+            hdr_right, values=["All Events", "Connection", "Data Sync", "Tasks", "Cache"],
+            font=ctk.CTkFont(family="Segoe UI", size=10), width=105, height=28,
+            corner_radius=6, fg_color="#060d17", button_color="#0d1b2a",
+            button_hover_color="#162e4c", text_color="#ffffff",
+            dropdown_fg_color="#0c182b", dropdown_text_color="#ffffff",
+            dropdown_hover_color="#162e4c",
+            command=lambda v: self._refresh_inline_activity_log()
+        )
+        self.inline_filter_menu.pack(side=ctk.LEFT)
+        self.inline_filter_menu.set(getattr(self, 'log_filter_category', 'All Events'))
+
+        # Log Scrollable Frame (Integrated Live Terminal)
+        self.inline_log_scroll_frame = ctk.CTkScrollableFrame(
+            log_card, fg_color="#040810", border_width=1, border_color="#132034",
+            corner_radius=8, height=140, scrollbar_button_color="#142236", scrollbar_button_hover_color="#1a2d47"
+        )
+        self.inline_log_scroll_frame.pack(fill=ctk.BOTH, expand=True, padx=16, pady=(0, 12))
+
+        self._refresh_inline_activity_log()
+
+    def _refresh_inline_activity_log(self):
+        if not hasattr(self, 'inline_log_scroll_frame') or not self.inline_log_scroll_frame or not self.inline_log_scroll_frame.winfo_exists():
+            return
+        for w in self.inline_log_scroll_frame.winfo_children():
+            w.destroy()
+
+        cat_filter = self.inline_filter_menu.get() if hasattr(self, 'inline_filter_menu') and self.inline_filter_menu.winfo_exists() else "All Events"
+        with _activity_log_lock:
+            logs_copy = list(_activity_logs)
+
+        filtered = []
+        for l in logs_copy:
+            cat = l.get("category", "").upper()
+            if cat_filter == "All Events":
+                filtered.append(l)
+            elif cat_filter == "Connection" and cat == "CONNECTION":
+                filtered.append(l)
+            elif cat_filter == "Data Sync" and cat == "SYNC":
+                filtered.append(l)
+            elif cat_filter == "Tasks" and cat == "TASK":
+                filtered.append(l)
+            elif cat_filter == "Cache" and cat == "CACHE":
+                filtered.append(l)
+
+        if not filtered:
+            ctk.CTkLabel(
+                self.inline_log_scroll_frame,
+                text="No log events recorded yet.",
+                font=ctk.CTkFont(family="Consolas", size=10),
+                text_color="#475569"
+            ).pack(pady=15)
+            return
+
+        badge_colors = {
+            "SUCCESS": ("#064e3b", "#34d399"),
+            "ERROR": ("#7f1d1d", "#f87171"),
+            "WARN": ("#78350f", "#fbbf24"),
+            "INFO": ("#1e293b", "#94a3b8")
+        }
+
+        for item in reversed(filtered):
+            row = ctk.CTkFrame(self.inline_log_scroll_frame, fg_color="transparent")
+            row.pack(fill=ctk.X, pady=2, padx=4)
+
+            # Timestamp
+            ctk.CTkLabel(
+                row, text=item["timestamp"],
+                font=ctk.CTkFont(family="Consolas", size=10),
+                text_color="#64748b", width=65, anchor="w"
+            ).pack(side=ctk.LEFT)
+
+            # Badge
+            lvl = item.get("level", "INFO")
+            bg_c, fg_c = badge_colors.get(lvl, ("#1e293b", "#94a3b8"))
+            cat_text = item.get("category", "INFO")[:7]
+
+            badge = ctk.CTkFrame(row, fg_color=bg_c, corner_radius=4, height=18)
+            badge.pack(side=ctk.LEFT, padx=(4, 8))
+            badge.pack_propagate(False)
+
+            ctk.CTkLabel(
+                badge, text=f"[{cat_text}]",
+                font=ctk.CTkFont(family="Consolas", size=8, weight="bold"),
+                text_color=fg_c
+            ).pack(padx=4, pady=0)
+
+            # Message
+            msg_label = ctk.CTkLabel(
+                row, text=item["message"],
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color="#e2e8f0", anchor="w"
+            )
+            msg_label.pack(side=ctk.LEFT, fill=ctk.X, expand=True)
+
+    def _on_activity_log_added(self, entry):
+        self._refresh_inline_activity_log()
+        if hasattr(self, 'activity_log_window') and self.activity_log_window is not None and self.activity_log_window.winfo_exists():
+            self._refresh_activity_log_view()
+
+    def _copy_activity_log(self):
+        with _activity_log_lock:
+            lines = [f"[{l['timestamp']}] [{l['category']}] [{l['level']}] {l['message']}" for l in _activity_logs]
+        text_data = "\n".join(lines)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text_data)
+        self.show_message("Activity log copied to clipboard!", "success")
+
+    def _clear_activity_log(self):
+        with _activity_log_lock:
+            _activity_logs.clear()
+        add_activity_log("SYSTEM", "Activity log cleared", "INFO")
+        self._refresh_inline_activity_log()
+        if hasattr(self, 'activity_log_window') and self.activity_log_window is not None and self.activity_log_window.winfo_exists():
+            self._refresh_activity_log_view()
+
+    def _run_live_connection_test(self):
+        if hasattr(self, 'inline_test_btn') and self.inline_test_btn and self.inline_test_btn.winfo_exists():
+            self.inline_test_btn.configure(text="Testing...", state="disabled")
+        if hasattr(self, 'test_conn_btn') and self.test_conn_btn and self.test_conn_btn.winfo_exists():
+            self.test_conn_btn.configure(text="Testing...", state="disabled")
+
+        def test_worker():
+            res = test_connection_diagnostics()
+            def update_ui():
+                if hasattr(self, 'inline_test_btn') and self.inline_test_btn and self.inline_test_btn.winfo_exists():
+                    self.inline_test_btn.configure(text="🔄 Test Connection", state="normal")
+                if hasattr(self, 'test_conn_btn') and self.test_conn_btn and self.test_conn_btn.winfo_exists():
+                    self.test_conn_btn.configure(text="🔄 Test Connection Now", state="normal")
+
+                self.last_latency_ms = res["latency_ms"]
+                self.connection_status = res["connected"]
+                self.update_status(res["connected"])
+
+                if hasattr(self, 'inline_latency_label') and self.inline_latency_label and self.inline_latency_label.winfo_exists():
+                    self.inline_latency_label.configure(text=f"⚡ {res['latency_ms']} ms")
+                if hasattr(self, 'inline_status_badge') and self.inline_status_badge and self.inline_status_badge.winfo_exists():
+                    self.inline_status_badge.configure(
+                        text="● Online (Synced)" if res["connected"] else "● Offline (Cached)",
+                        text_color="#10b981" if res["connected"] else "#ef4444"
+                    )
+
+                self._refresh_inline_activity_log()
+                if hasattr(self, 'activity_log_window') and self.activity_log_window is not None and self.activity_log_window.winfo_exists():
+                    self._refresh_activity_log_view()
+
+            self.root.after(0, update_ui)
+
+        threading.Thread(target=test_worker, daemon=True).start()
+
     def setup_footer(self, parent=None):
         p = parent if parent is not None else self.main_frame
         footer_frame = ctk.CTkFrame(p, fg_color="transparent")
-        footer_frame.pack(pady=15, fill=ctk.X)
+        footer_frame.pack(fill=ctk.X, pady=(6, 10))
 
-        footer_container = ctk.CTkFrame(footer_frame, fg_color="transparent")
-        footer_container.pack(fill=ctk.X)
-
-        footer_container.grid_columnconfigure(0, weight=1)
-        footer_container.grid_columnconfigure(1, weight=1)
-
-        # LEFT: Status Indicator
-        status_frame = ctk.CTkFrame(footer_container, fg_color="transparent")
-        status_frame.grid(row=0, column=0, sticky="w")
-
-        self.status_dot = ctk.CTkFrame(
-            status_frame,
-            width=12,
-            height=12,
-            corner_radius=6,
-            fg_color="#f44336"
-        )
-        self.status_dot.pack(side=ctk.LEFT, padx=(0, 8))
-        self.status_dot.pack_propagate(False)
-
-        self.status_label = ctk.CTkLabel(
-            status_frame,
-            text="Offline",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=("#333333", "#e0e0e0")
-        )
-        self.status_label.pack(side=ctk.LEFT)
-
-        # RIGHT: Refresh Button
+        # RIGHT: Refresh Records Button
         refresh_btn = ctk.CTkButton(
-            footer_container,
-            text="Refresh",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            width=80,
-            height=28,
-            corner_radius=6,
-            fg_color=("#4267CE", "#1565c0"),
-            hover_color=("#365899", "#0d47a1"),
-            command=lambda: [self.update_all_counts(), self.show_message("Refreshed!", "success")]
+            footer_frame,
+            text="🔄 Refresh Records",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            width=135,
+            height=32,
+            corner_radius=8,
+            fg_color="#0a121e",
+            hover_color="#142236",
+            border_width=1,
+            border_color="#182a44",
+            text_color="#ffffff",
+            command=lambda: [self.update_all_counts(), self.show_message("Records refreshed!", "success")]
         )
-        refresh_btn.grid(row=0, column=1, sticky="e")
+        refresh_btn.pack(side=ctk.RIGHT)
 
         # Call update_edit_mode after UI is fully built
         self.root.after(100, self.update_edit_mode)
