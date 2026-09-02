@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('version.txt', '.'), ('icon_2.ico', '.'), ('icon.ico', '.'), ('aurora_bg.png', '.'), ('credentials.json', '.'), ('efl_users.json', '.'), ('sent_log.xlsx', '.'), ('assets', 'assets')]
 binaries = []
-hiddenimports = ['pandas', 'openpyxl', 'openpyxl.styles', 'requests', 'dotenv', 'korber_tool', 'reconciliation_tool', 'korber_login_bot', 'outlook_email_gui', 'efldatamanager', 'gspread', 'oauth2client', 'oauth2client.service_account', 'updater', 'win32com', 'win32com.client', 'pythoncom', 'win32api', 'winreg', 'customtkinter', 'queue', 'hashlib', 'calendar']
+hiddenimports = ['pandas', 'openpyxl', 'openpyxl.styles', 'requests', 'dotenv', 'korber_tool', 'reconciliation_tool', 'korber_login_bot', 'outlook_email_gui', 'efldatamanager', 'gspread', 'oauth2client', 'oauth2client.service_account', 'updater', 'win32com', 'win32com.client', 'pythoncom', 'win32api', 'winreg', 'customtkinter', 'queue', 'hashlib', 'calendar', 'google', 'google.genai']
 tmp_ret = collect_all('selenium')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('webdriver_manager')
@@ -17,6 +17,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('gspread')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('oauth2client')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('google_genai')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

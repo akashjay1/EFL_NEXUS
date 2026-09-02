@@ -67,7 +67,7 @@ SIDEBAR_WIDTH_EXPANDED = 230
 SIDEBAR_WIDTH_COLLAPSED = 64
 
 NAV_ITEMS = [
-    ("dashboard", "🏠", "Dashboard"),
+    ("dashboard", "🏠","Dashboard"),
     ("tool1", "🔧", "Korber Automation"),
     ("tool2", "⚡", "Load Reconciliation"),
     ("tool3", "📧", "Outlook Email Sender"),

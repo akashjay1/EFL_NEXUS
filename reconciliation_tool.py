@@ -1,7 +1,7 @@
 import sys
 import html
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import pandas as pd
 import os
 import json
@@ -14,7 +14,283 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import re
 
-warnings.filterwarnings('ignore')
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GENAI = True
+except ImportError:
+    genai = None
+    types = None
+    HAS_GENAI = False
+
+def is_hu_identifier(col_name):
+    """Returns True if the column name represents an HU (Handling Unit) ID rather than an Item ID."""
+    if not col_name:
+        return False
+    norm = str(col_name).lower().strip().replace('_', ' ').replace('-', ' ')
+    tokens = norm.split()
+    return 'hu' in tokens or 'huid' in norm.replace(' ', '') or norm.startswith('hu ') or norm.endswith(' hu')
+
+
+def find_non_empty_lot_col(df, cols):
+    """Returns lot number column name if present and contains non-empty, non-null values."""
+    if df is None or not cols:
+        return None
+    for col in cols:
+        if is_hu_identifier(col):
+            continue
+        cl = str(col).lower().strip().replace('_', ' ').replace('-', ' ')
+        if ('lot' in cl or 'batch' in cl) and 'desc' not in cl and 'type' not in cl:
+            if col in df.columns:
+                series = df[col].dropna().astype(str).str.strip()
+                valid_vals = [v for v in series.head(25) if v and v.lower() not in ('nan', 'none', 'null', '', '0', '0.0')]
+                if len(valid_vals) > 0:
+                    return col
+def strip_client_code_from_item(df, item_col, client_col, new_col_name=None):
+    """
+    Checks if item_col values are prefixed/concatenated with client_col values.
+    If so, creates a new column with the client code removed (e.g. 'ABC-12345' -> '12345').
+    Returns (df_modified, new_col_name, True) if prefix was detected and stripped,
+    or (df, item_col, False) if not.
+    """
+    if df is None or item_col not in df.columns or client_col not in df.columns:
+        return df, item_col, False
+
+    matched_prefixes = 0
+    total_valid = 0
+
+    sample_df = df[[item_col, client_col]].dropna().head(40)
+    for _, row in sample_df.iterrows():
+        item_val = str(row[item_col]).strip()
+        client_val = str(row[client_col]).strip()
+        if not item_val or not client_val or client_val.lower() in ('nan', 'none', '', 'null'):
+            continue
+        total_valid += 1
+        
+        found = False
+        for sep in ['-', '_', ' ', '/', ':']:
+            if item_val.startswith(client_val + sep):
+                found = True
+                break
+        if not found and item_val.startswith(client_val):
+            rem = item_val[len(client_val):]
+            if rem and (not rem[0].isalnum() or (client_val.isalpha() and rem.isdigit())):
+                found = True
+        if found:
+            matched_prefixes += 1
+
+    if total_valid > 0 and (matched_prefixes / total_valid) >= 0.4:
+        target_col = new_col_name or f"{item_col}_Cleaned"
+        df_copy = df.copy()
+
+        def _clean_item(row):
+            item_val = str(row[item_col]).strip() if pd.notna(row[item_col]) else ""
+            client_val = str(row[client_col]).strip() if pd.notna(row[client_col]) else ""
+            if not item_val or not client_val or client_val.lower() in ('nan', 'none', '', 'null'):
+                return item_val
+            for sep in ['-', '_', ' ', '/', ':']:
+                prefix = client_val + sep
+                if item_val.startswith(prefix):
+                    return item_val[len(prefix):].strip()
+            if item_val.startswith(client_val):
+                rem = item_val[len(client_val):]
+                if rem and (not rem[0].isalnum() or (client_val.isalpha() and rem.isdigit())):
+                    return rem.lstrip('-_ /:')
+            return item_val
+
+        df_copy[target_col] = df_copy.apply(_clean_item, axis=1)
+        return df_copy, target_col, True
+
+    return df, item_col, False
+
+
+def detect_reconciliation_mapping_with_gemini(df_history, df_plan, api_key=None):
+    """
+    Analyzes sample rows and columns using Gemini to deduce Load ID,
+    concatenations, and Quantity columns automatically.
+    """
+    global HAS_GENAI, genai, types
+    if not HAS_GENAI:
+        try:
+            from google import genai as _genai
+            from google.genai import types as _types
+            genai = _genai
+            types = _types
+            HAS_GENAI = True
+        except ImportError:
+            pass
+
+    if not HAS_GENAI:
+        raise RuntimeError("google-genai library is not installed. Run: pip install google-genai")
+
+    key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not key:
+        try:
+            settings_path = os.path.join(os.path.expanduser("~"), ".load_reconciliation_tool_settings.json")
+            if os.path.exists(settings_path):
+                with open(settings_path, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                    key = s_data.get("gemini_api_key")
+        except Exception:
+            pass
+
+    if not key:
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    key = cfg.get("gemini_api_key") or cfg.get("GEMINI_API_KEY")
+        except Exception:
+            pass
+
+    if not key:
+        raise ValueError("GEMINI_API_KEY not found in environment variables, settings, or config.json.")
+
+    client = genai.Client(api_key=key)
+
+    # Extract clean sample preview data (first 3 rows)
+    hist_sample = df_history.head(3).astype(str).to_dict(orient='records')
+    plan_sample = df_plan.head(3).astype(str).to_dict(orient='records')
+
+    prompt = f"""
+You are an expert inventory reconciliation engine. 
+Determine the matching columns to reconcile 'Loading History' against 'Load Plan'.
+
+--- LOADING HISTORY (Actual) ---
+Columns: {df_history.columns.tolist()}
+Sample Data:
+{json.dumps(hist_sample, indent=2)}
+
+--- LOAD PLAN (Planned) ---
+Columns: {df_plan.columns.tolist()}
+Sample Data:
+{json.dumps(plan_sample, indent=2)}
+
+Tasks & CRITICAL Rules:
+1. STRICT PROHIBITION - NEVER SELECT HU ID:
+   - NEVER select 'Hu Id', 'HU_ID', 'Supplier Hu', or any column containing 'HU' as the matching key or load ID!
+   - 'HU' stands for Handling Unit (pallet/carton/box) and is NOT the item matching key. Completely ignore all HU columns!
+2. Prioritize Item Identifiers:
+   - Target columns like 'Item Number', 'Display Item Number', 'Display_Item_Number', 'Item_No', 'Item', 'SKU', 'Load ID'.
+3. CLIENT CODE PREFIX REMOVAL (MANDATORY):
+   - Check if the Item Number is concatenated with the Client Code (e.g. 'ABC-12345' where Client Code is 'ABC').
+   - If it is, specify removing the client code prefix or splitting by '-' so the extracted item number directly matches 'Display Item Number' ('DISPLAY_ITEM_NUMBER') on Load Plan.
+4. LOT NUMBER CONCATENATION (WHEN AVAILABLE):
+   - If Lot Number data is available in both files, concatenate it with '-' to the item identifier.
+5. Identify the numeric quantity column in each file ('Actual Qty', 'QUANTITY', 'Pick Qty', etc.).
+
+Return ONLY a JSON object adhering to this schema:
+{{
+  "history_load_id": "column_name (NEVER use Hu Id/HU_ID - use Item Number or similar)",
+  "history_concat_columns": ["col1", "col2"],
+  "history_concat_separator": "-",
+  "history_split_column": "column_name",
+  "history_split_separator": "-",
+  "history_split_part_index": 0,
+  "history_qty": "column_name",
+  "plan_load_id": "column_name (NEVER use Hu Id/HU_ID - use Display Item Number or Concatenated)",
+  "plan_concat_columns": ["col1", "col2"],
+  "plan_concat_separator": "-",
+  "plan_split_column": "column_name",
+  "plan_split_separator": "-",
+  "plan_split_part_index": 0,
+  "plan_qty": "column_name",
+  "reasoning": "Brief explanation of the chosen mapping, concatenation, or splitting"
+}}
+"""
+
+    # Prioritize fastest models and disable thinking budget for instant output
+    models_to_try = ["gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-2.5-flash"]
+    last_error = None
+    response = None
+
+    thinking_cfg = None
+    if hasattr(types, "ThinkingConfig"):
+        try:
+            thinking_cfg = types.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass
+
+    for model_name in models_to_try:
+        try:
+            config_kwargs = {
+                "response_mime_type": "application/json",
+                "temperature": 0.1,
+            }
+            # Only attach thinking_config to models that support it (e.g. 3.7) to avoid 400 Bad Request
+            if thinking_cfg is not None and "3.7" in model_name:
+                config_kwargs["thinking_config"] = thinking_cfg
+
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(**config_kwargs)
+            )
+            if response and response.text:
+                break
+        except Exception as err:
+            last_error = err
+            # Fallback retry without thinking_config if unsupported for this model
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1
+                    )
+                )
+                if response and response.text:
+                    break
+            except Exception as retry_err:
+                last_error = retry_err
+                continue
+
+    if response is None or not response.text:
+        raise RuntimeError(f"Gemini API request failed: {last_error}")
+
+    raw_text = response.text.strip()
+    if raw_text.startswith("```json"):
+        raw_text = raw_text[7:]
+    if raw_text.startswith("```"):
+        raw_text = raw_text[3:]
+    if raw_text.endswith("```"):
+        raw_text = raw_text[:-3]
+
+    res = json.loads(raw_text.strip())
+
+    # Fallback guard: ensure HU ID is never returned
+    def _find_item_fallback(df):
+        for c in df.columns:
+            if not is_hu_identifier(c):
+                cl = c.lower().strip().replace('_', ' ').replace('-', ' ')
+                if 'display item' in cl:
+                    return c
+        for c in df.columns:
+            if not is_hu_identifier(c):
+                cl = c.lower().strip().replace('_', ' ').replace('-', ' ')
+                if 'item number' in cl or 'item no' in cl or 'item #' in cl:
+                    return c
+        for c in df.columns:
+            if not is_hu_identifier(c):
+                cl = c.lower().strip()
+                if cl in ('item', 'sku', 'part', 'part number'):
+                    return c
+        return None
+
+    if is_hu_identifier(res.get('history_load_id')):
+        alt = _find_item_fallback(df_history)
+        if alt:
+            res['history_load_id'] = alt
+
+    if is_hu_identifier(res.get('plan_load_id')):
+        alt = _find_item_fallback(df_plan)
+        if alt:
+            res['plan_load_id'] = alt
+
+    return res
+
 
 class TextToColumnsDialog:
     """Dialog for configuring text to columns with draggable split markers and details panel"""
@@ -1715,6 +1991,8 @@ class ReconciliationApp:
         # Lists so multiple concatenations (done one after another) are all replayed.
         self.history_concat_configs = []
         self.plan_concat_configs = []
+        self.history_split_configs = []
+        self.plan_split_configs = []
         self.last_output_file = None
         
         # Additional options
@@ -1820,8 +2098,32 @@ class ReconciliationApp:
         else:
             self.root.destroy()
     
+    def get_gemini_api_key(self):
+        """Retrieve Gemini API key from environment, settings, or config.json."""
+        key = os.environ.get("GEMINI_API_KEY")
+        if key and key.strip():
+            return key.strip()
+
+        if hasattr(self, 'settings_data') and isinstance(self.settings_data, dict):
+            key = self.settings_data.get('gemini_api_key')
+            if key and key.strip():
+                return key.strip()
+
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                    key = cfg.get("gemini_api_key") or cfg.get("GEMINI_API_KEY")
+                    if key and key.strip():
+                        return key.strip()
+        except Exception:
+            pass
+
+        return None
+
     def open_settings_dialog(self):
-        """Open the ⚙️ Settings popup with the remember/theme switches."""
+        """Open the ⚙️ Settings popup with the remember/theme switches and Gemini AI key."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Settings")
         dialog.transient(self.root)
@@ -1854,6 +2156,41 @@ class ReconciliationApp:
             command=self._on_theme_toggle
         ).pack(anchor=tk.W)
         
+        # --- Gemini AI Settings ---
+        ttk.Separator(container, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(12, 8))
+        ttk.Label(container, text="✨ Gemini AI Settings", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W, pady=(0, 6))
+        
+        api_row = ttk.Frame(container)
+        api_row.pack(fill=tk.X, pady=4)
+        ttk.Label(api_row, text="Gemini API Key:", width=15).pack(side=tk.LEFT)
+        
+        api_key_var = tk.StringVar(value=self.get_gemini_api_key() or "")
+        api_entry = ttk.Entry(api_row, textvariable=api_key_var, show="*", width=30)
+        api_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        
+        def save_api_key():
+            k = api_key_var.get().strip()
+            if k:
+                os.environ["GEMINI_API_KEY"] = k
+                self.settings_data['gemini_api_key'] = k
+                self.save_settings()
+                try:
+                    cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+                    cfg = {}
+                    if os.path.exists(cfg_path):
+                        with open(cfg_path, "r", encoding="utf-8") as f:
+                            cfg = json.load(f)
+                    cfg["gemini_api_key"] = k
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump(cfg, f, indent=4)
+                except Exception:
+                    pass
+                messagebox.showinfo("Saved", "Gemini API key saved successfully!", parent=dialog)
+            else:
+                messagebox.showwarning("Warning", "API key cannot be empty.", parent=dialog)
+
+        ttk.Button(api_row, text="Save Key", command=save_api_key).pack(side=tk.RIGHT)
+
         ttk.Separator(container, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
         
         ttk.Button(container, text="Close", command=dialog.destroy).pack(anchor=tk.E)
@@ -1924,6 +2261,8 @@ class ReconciliationApp:
             self.footer_label.configure(bg=palette['bg'], fg=palette['subtle_fg'])
         if hasattr(self, 'error_label'):
             self.error_label.configure(bg=palette['bg'])
+        if hasattr(self, 'gemini_button'):
+            self.gemini_button.configure(bg="#1e3a8a" if not self.dark_mode.get() else "#1d4ed8", fg="#ffffff")
         if hasattr(self, 'run_button'):
             self.run_button.configure(bg=self.colors['secondary'], fg=palette['button_fg'])
         
@@ -2372,6 +2711,18 @@ class ReconciliationApp:
         # ===== ACTION BUTTONS (left column, stacked to fit a narrower column) =====
         button_frame = ttk.Frame(left_column)
         button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        self.gemini_button = tk.Button(
+            button_frame,
+            text="✨ Auto-Detect & Map with Gemini",
+            font=('Segoe UI', 11, 'bold'),
+            bg="#1e3a8a",
+            fg="#ffffff",
+            pady=8,
+            command=self.run_gemini_auto_mapping,
+            cursor="hand2"
+        )
+        self.gemini_button.pack(fill=tk.X, pady=(0, 8))
         
         self.run_button = tk.Button(
             button_frame,
@@ -2892,19 +3243,128 @@ class ReconciliationApp:
             combo_load_id['values'] = columns
             combo_qty['values'] = columns
             
-            # Auto-select columns
+            # Auto-select columns: prioritize item numbers and display item numbers, then load ID
+            best_id_col = None
+            best_qty_col = None
+
+            # Special auto-concatenation / auto-split / client code removal
+            if combo_load_id == self.plan_load_id_combo:
+                client_col = None
+                display_item_col = None
+                item_num_col = None
+                lot_col = find_non_empty_lot_col(df, columns)
+
+                for col in columns:
+                    if is_hu_identifier(col):
+                        continue
+                    cl = col.lower().strip().replace('_', ' ').replace('-', ' ')
+                    if any(k in cl for k in ['client', 'cust', 'company', 'owner']):
+                        if not client_col:
+                            client_col = col
+                    if 'display item' in cl:
+                        if not display_item_col:
+                            display_item_col = col
+                    elif 'item number' in cl or 'item no' in cl or 'item #' in cl:
+                        if not item_num_col:
+                            item_num_col = col
+
+                # Plan: Prioritize Display Item Number directly
+                if display_item_col:
+                    best_id_col = display_item_col
+                    self.add_log(f"📌 Selected Plan Display Item Number: '{display_item_col}'", "INFO")
+                elif item_num_col and client_col:
+                    df, cleaned_col, stripped = strip_client_code_from_item(df, item_num_col, client_col)
+                    if stripped:
+                        self.add_log(f"✂️ Detected Plan Item Number ('{item_num_col}') concatenated with Client Code ('{client_col}') - stripped prefix: '{cleaned_col}'", "INFO")
+                        self.plan_df_loaded = df
+                        columns = df.columns.tolist()
+                        self.plan_columns = columns
+                        combo_load_id['values'] = columns
+                        combo_qty['values'] = columns
+                        best_id_col = cleaned_col
+
+            elif combo_load_id == self.history_load_id_combo:
+                client_col = None
+                display_item_col = None
+                item_num_col = None
+                lot_col = find_non_empty_lot_col(df, columns)
+
+                for col in columns:
+                    if is_hu_identifier(col):
+                        continue
+                    cl = col.lower().strip().replace('_', ' ').replace('-', ' ')
+                    if any(k in cl for k in ['client', 'cust', 'company', 'owner']):
+                        if not client_col:
+                            client_col = col
+                    if 'display item' in cl:
+                        if not display_item_col:
+                            display_item_col = col
+                    elif 'item number' in cl or 'item no' in cl or 'item #' in cl:
+                        if not item_num_col:
+                            item_num_col = col
+
+                # Check if History Item Number is concatenated with Client Code
+                if item_num_col and client_col:
+                    df, cleaned_col, stripped = strip_client_code_from_item(df, item_num_col, client_col)
+                    if stripped:
+                        self.add_log(f"✂️ Detected Item Number ('{item_num_col}') concatenated with Client Code ('{client_col}') - stripped client prefix to match Display Item Number: '{cleaned_col}'", "INFO")
+                        self.history_df_loaded = df
+                        columns = df.columns.tolist()
+                        self.history_columns = columns
+                        combo_load_id['values'] = columns
+                        combo_qty['values'] = columns
+                        best_id_col = cleaned_col
+
             for col in columns:
-                col_lower = col.lower().strip()
-                if 'load' in col_lower and ('id' in col_lower or '#' in col_lower or 'number' in col_lower):
-                    if not target_var_load_id.get():
-                        target_var_load_id.set(col)
-                if 'qty' in col_lower or 'quantity' in col_lower or 'pick' in col_lower or 'actual' in col_lower:
-                    if not target_var_qty.get():
-                        target_var_qty.set(col)
+                if is_hu_identifier(col):
+                    continue
+                cl = col.lower().strip().replace('_', ' ').replace('-', ' ')
+                if 'display item' in cl and not best_id_col:
+                    best_id_col = col
+                    break
+                elif ('item number' in cl or 'item no' in cl or 'item #' in cl) and not best_id_col:
+                    best_id_col = col
+
+            if not best_id_col:
+                for col in columns:
+                    if is_hu_identifier(col):
+                        continue
+                    cl = col.lower().strip()
+                    if 'load' in cl and ('id' in cl or '#' in cl or 'number' in cl):
+                        best_id_col = col
+                        break
+
+            if not best_id_col:
+                for col in columns:
+                    if is_hu_identifier(col):
+                        continue
+                    cl = col.lower().strip()
+                    if cl in ('item', 'sku', 'part', 'part number'):
+                        best_id_col = col
+                        break
+
+            if best_id_col and not target_var_load_id.get():
+                target_var_load_id.set(best_id_col)
+
+            for col in columns:
+                cl = col.lower().strip()
+                if 'actual' in cl and ('qty' in cl or 'quantity' in cl):
+                    best_qty_col = col
+                    break
+                elif 'pick' in cl and ('qty' in cl or 'quantity' in cl):
+                    if not best_qty_col:
+                        best_qty_col = col
+                elif 'qty' in cl or 'quantity' in cl:
+                    if not best_qty_col:
+                        best_qty_col = col
+
+            if best_qty_col and not target_var_qty.get():
+                target_var_qty.set(best_qty_col)
             
-            # Fallback selections
+            # Fallback selections (never select HU ID)
             if not target_var_load_id.get() and columns:
-                target_var_load_id.set(columns[0])
+                non_hu = [c for c in columns if not is_hu_identifier(c)]
+                target_var_load_id.set(non_hu[0] if non_hu else columns[0])
             if not target_var_qty.get() and columns:
                 target_var_qty.set(columns[-1])
             
@@ -3023,6 +3483,29 @@ class ReconciliationApp:
             self.add_log(f"   Removed original columns: {', '.join(cols_to_drop)}", "DEBUG")
         
         self.add_log(f"✅ Concatenation applied: '{new_column_name}' created from {len(columns)} column(s)", "SUCCESS")
+        return df_copy
+    
+    def apply_delimiter_split(self, df, column, separator, part_index, new_column_name, drop_original, file_type):
+        """Split a column by delimiter (e.g. '-') and extract the given part into new_column_name"""
+        self.add_log(f"✂️ Splitting {file_type} column '{column}' by '{separator}' (index {part_index}) into '{new_column_name}'", "INFO")
+        df_copy = df.copy()
+
+        def split_row(val):
+            if pd.isna(val):
+                return ""
+            parts = str(val).split(separator)
+            if 0 <= part_index < len(parts):
+                return parts[part_index].strip()
+            elif part_index < 0 and abs(part_index) <= len(parts):
+                return parts[part_index].strip()
+            return str(val).strip()
+
+        df_copy[new_column_name] = df_copy[column].apply(split_row)
+
+        if drop_original and column != new_column_name:
+            df_copy = df_copy.drop(columns=[column])
+
+        self.add_log(f"✅ Delimiter split applied: '{new_column_name}' created from '{column}'", "SUCCESS")
         return df_copy
     
     def browse_history_file(self):
@@ -3151,6 +3634,8 @@ class ReconciliationApp:
         self.plan_original_data = None
         self.history_concat_configs = []
         self.plan_concat_configs = []
+        self.history_split_configs = []
+        self.plan_split_configs = []
         self.history_df_loaded = None
         self.plan_df_loaded = None
         self.history_load_id_combo['values'] = []
@@ -3320,6 +3805,284 @@ class ReconciliationApp:
         except Exception as e:
             self.add_log(f"⚠️ Formatting warning: {e}", "WARNING")
     
+    def run_gemini_auto_mapping(self):
+        """Uses Gemini to automatically inspect both loaded files and set columns."""
+        if not self.history_file_path.get() or not self.plan_file_path.get():
+            messagebox.showwarning("Missing Files", "Please select both Loading History and Load Plan files first.")
+            return
+
+        global HAS_GENAI, genai, types
+        if not HAS_GENAI:
+            try:
+                from google import genai as _genai
+                from google.genai import types as _types
+                genai = _genai
+                types = _types
+                HAS_GENAI = True
+            except ImportError:
+                pass
+
+        if not HAS_GENAI:
+            messagebox.showerror(
+                "Missing Library",
+                "The 'google-genai' library is required for AI auto-mapping.\n\nPlease install it using:\npip install google-genai"
+            )
+            return
+
+        api_key = self.get_gemini_api_key()
+        if not api_key:
+            prompt_key = simpledialog.askstring(
+                "Gemini API Key",
+                "Please enter your Google Gemini API Key:\n(It will be saved for future use)",
+                parent=self.root,
+                show="*"
+            )
+            if not prompt_key or not prompt_key.strip():
+                messagebox.showinfo("API Key Required", "Gemini API Key is required for auto-detection.")
+                return
+            api_key = prompt_key.strip()
+            os.environ["GEMINI_API_KEY"] = api_key
+            self.settings_data['gemini_api_key'] = api_key
+            try:
+                self.save_settings()
+            except Exception:
+                pass
+            try:
+                cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+                cfg = {}
+                if os.path.exists(cfg_path):
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                cfg["gemini_api_key"] = api_key
+                with open(cfg_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=4)
+            except Exception:
+                pass
+
+        if hasattr(self, 'gemini_button') and self.gemini_button:
+            self.gemini_button.config(state=tk.DISABLED)
+
+        def _apply_mapping_to_ui(mapping, hist_df, plan_df):
+            try:
+                self.history_df_loaded = hist_df
+                self.history_columns = hist_df.columns.tolist()
+                self.history_load_id_combo['values'] = self.history_columns
+                self.history_qty_combo['values'] = self.history_columns
+
+                self.plan_df_loaded = plan_df
+                self.plan_columns = plan_df.columns.tolist()
+                self.plan_load_id_combo['values'] = self.plan_columns
+                self.plan_qty_combo['values'] = self.plan_columns
+
+                def resolve_col(name, df_target):
+                    """Resolve column name case-insensitively, ignoring spaces, underscores, and hyphens."""
+                    if not name or df_target is None:
+                        return None
+                    if name in df_target.columns:
+                        return name
+                    normalized = str(name).lower().strip().replace('_', '').replace(' ', '').replace('-', '')
+                    for c in df_target.columns:
+                        if str(c).lower().strip().replace('_', '').replace(' ', '').replace('-', '') == normalized:
+                            return c
+                    return None
+
+                # 1. Handle History Splitting, Concatenation, or Direct Key
+                raw_hist_concat = mapping.get('history_concat_columns', [])
+                hist_concat_cols = [resolve_col(c, hist_df) for c in raw_hist_concat] if raw_hist_concat else []
+                hist_split_col = resolve_col(mapping.get('history_split_column'), hist_df)
+
+                if len(hist_concat_cols) >= 2 and all(c is not None for c in hist_concat_cols):
+                    sep = mapping.get('history_concat_separator', '-')
+                    new_col = "Concatenated_History"
+                    self.add_log(f"🔗 Gemini detected concatenation on History: {' + '.join(hist_concat_cols)}", "INFO")
+                    new_hist_df = self.apply_column_concatenation(
+                        hist_df, hist_concat_cols, sep, new_col, False, "History"
+                    )
+                    self.history_concat_configs = [{
+                        'columns': hist_concat_cols,
+                        'separator': sep,
+                        'new_column_name': new_col,
+                        'drop_originals': False
+                    }]
+                    self.history_df_loaded = new_hist_df
+                    self.history_columns = new_hist_df.columns.tolist()
+                    self.history_load_id_combo['values'] = self.history_columns
+                    self.history_qty_combo['values'] = self.history_columns
+                    self.history_load_id_col.set(new_col)
+                    self.add_log(f"🔑 Set History Load ID Column: {new_col}", "INFO")
+
+                elif hist_split_col:
+                    sep = mapping.get('history_split_separator', '-')
+                    part_idx = mapping.get('history_split_part_index', 0)
+                    try:
+                        part_idx = int(part_idx)
+                    except (ValueError, TypeError):
+                        part_idx = 0
+                    new_col = f"{hist_split_col}_Split"
+                    self.add_log(f"✂️ Gemini detected split on History '{hist_split_col}' by '{sep}'", "INFO")
+                    new_hist_df = self.apply_delimiter_split(
+                        hist_df, hist_split_col, sep, part_idx, new_col, False, "History"
+                    )
+                    self.history_split_configs = [{
+                        'column': hist_split_col,
+                        'separator': sep,
+                        'part_index': part_idx,
+                        'new_column_name': new_col,
+                        'drop_original': False
+                    }]
+                    self.history_df_loaded = new_hist_df
+                    self.history_columns = new_hist_df.columns.tolist()
+                    self.history_load_id_combo['values'] = self.history_columns
+                    self.history_qty_combo['values'] = self.history_columns
+                    self.history_load_id_col.set(new_col)
+                    self.add_log(f"🔑 Set History Load ID Column: {new_col}", "INFO")
+
+                else:
+                    hist_id = resolve_col(mapping.get('history_load_id'), hist_df)
+                    if hist_id and not is_hu_identifier(hist_id):
+                        self.history_load_id_col.set(hist_id)
+                        self.add_log(f"🔑 Set History Load ID Column: {hist_id}", "INFO")
+                    else:
+                        alt = _find_item_fallback(hist_df)
+                        if alt:
+                            self.history_load_id_col.set(alt)
+                            self.add_log(f"🔑 Set History Load ID Column (ignoring HU ID): {alt}", "INFO")
+
+                # Set History Quantity (keep current if valid or set from mapping)
+                hist_q = resolve_col(mapping.get('history_qty'), self.history_df_loaded)
+                if hist_q:
+                    self.history_qty_col.set(hist_q)
+                    self.add_log(f"📦 Set History Qty Column: {hist_q}", "INFO")
+                elif self.history_qty_col.get() and self.history_qty_col.get() in self.history_df_loaded.columns:
+                    self.add_log(f"📦 Preserved History Qty Column: {self.history_qty_col.get()}", "DEBUG")
+
+                # 2. Handle Plan Splitting, Concatenation, or Direct Key
+                raw_plan_concat = mapping.get('plan_concat_columns', [])
+                plan_concat_cols = [resolve_col(c, plan_df) for c in raw_plan_concat] if raw_plan_concat else []
+                plan_split_col = resolve_col(mapping.get('plan_split_column'), plan_df)
+
+                if len(plan_concat_cols) >= 2 and all(c is not None for c in plan_concat_cols):
+                    sep = mapping.get('plan_concat_separator', '-')
+                    new_col = "Concatenated"
+                    self.add_log(f"🔗 Gemini detected concatenation on Plan: {' + '.join(plan_concat_cols)}", "INFO")
+                    new_plan_df = self.apply_column_concatenation(
+                        plan_df, plan_concat_cols, sep, new_col, False, "Plan"
+                    )
+                    self.plan_concat_configs = [{
+                        'columns': plan_concat_cols,
+                        'separator': sep,
+                        'new_column_name': new_col,
+                        'drop_originals': False
+                    }]
+                    self.plan_df_loaded = new_plan_df
+                    self.plan_columns = new_plan_df.columns.tolist()
+                    self.plan_load_id_combo['values'] = self.plan_columns
+                    self.plan_qty_combo['values'] = self.plan_columns
+                    self.plan_load_id_col.set(new_col)
+                    self.add_log(f"🔑 Set Plan Load ID Column: {new_col}", "INFO")
+
+                elif plan_split_col:
+                    sep = mapping.get('plan_split_separator', '-')
+                    part_idx = mapping.get('plan_split_part_index', 0)
+                    try:
+                        part_idx = int(part_idx)
+                    except (ValueError, TypeError):
+                        part_idx = 0
+                    new_col = f"{plan_split_col}_Split"
+                    self.add_log(f"✂️ Gemini detected split on Plan '{plan_split_col}' by '{sep}'", "INFO")
+                    new_plan_df = self.apply_delimiter_split(
+                        plan_df, plan_split_col, sep, part_idx, new_col, False, "Plan"
+                    )
+                    self.plan_split_configs = [{
+                        'column': plan_split_col,
+                        'separator': sep,
+                        'part_index': part_idx,
+                        'new_column_name': new_col,
+                        'drop_original': False
+                    }]
+                    self.plan_df_loaded = new_plan_df
+                    self.plan_columns = new_plan_df.columns.tolist()
+                    self.plan_load_id_combo['values'] = self.plan_columns
+                    self.plan_qty_combo['values'] = self.plan_columns
+                    self.plan_load_id_col.set(new_col)
+                    self.add_log(f"🔑 Set Plan Load ID Column: {new_col}", "INFO")
+
+                else:
+                    plan_id = resolve_col(mapping.get('plan_load_id'), plan_df)
+                    if plan_id and not is_hu_identifier(plan_id):
+                        self.plan_load_id_col.set(plan_id)
+                        self.add_log(f"🔑 Set Plan Load ID Column: {plan_id}", "INFO")
+                    else:
+                        alt = _find_item_fallback(plan_df)
+                        if alt:
+                            self.plan_load_id_col.set(alt)
+                            self.add_log(f"🔑 Set Plan Load ID Column (ignoring HU ID): {alt}", "INFO")
+
+                # 3. Set Plan Quantity
+                plan_q = resolve_col(mapping.get('plan_qty'), self.plan_df_loaded)
+                if plan_q:
+                    self.plan_qty_col.set(plan_q)
+                    self.add_log(f"📦 Set Plan Qty Column: {plan_q}", "INFO")
+                elif self.plan_qty_col.get() and self.plan_df_loaded is not None and self.plan_qty_col.get() in self.plan_df_loaded.columns:
+                    self.add_log(f"📦 Preserved Plan Qty Column: {self.plan_qty_col.get()}", "DEBUG")
+
+                self.populate_preview('history')
+                self.populate_preview('plan')
+                self.update_progress(100, "Ready")
+                self.add_log("✅ Gemini successfully mapped all keys! You can now click 'Run Reconciliation'.", "SUCCESS")
+                messagebox.showinfo(
+                    "AI Auto-Detection Complete",
+                    f"Gemini successfully mapped matching keys and quantity columns!\n\n"
+                    f"• History Load ID: {self.history_load_id_col.get()}\n"
+                    f"• History Quantity: {self.history_qty_col.get()}\n"
+                    f"• Plan Load ID: {self.plan_load_id_col.get()}\n"
+                    f"• Plan Quantity: {self.plan_qty_col.get()}\n\n"
+                    f"Reasoning:\n{mapping.get('reasoning', 'Auto-detected matching identifiers.')}"
+                )
+
+            except Exception as e:
+                self.add_log(f"❌ Error applying mapping to UI: {str(e)}", "ERROR")
+            finally:
+                self.update_progress(0, "Ready")
+                if hasattr(self, 'gemini_button') and self.gemini_button:
+                    self.gemini_button.config(state=tk.NORMAL)
+
+        def _worker():
+            try:
+                self.root.after(0, lambda: self.add_log("🤖 Asking Gemini to analyze datasets and find matching keys...", "INFO"))
+                self.root.after(0, lambda: self.update_progress(25, "🤖 Gemini is analyzing files..."))
+
+                # Reuse in-memory loaded DataFrames if available; otherwise read once and cache
+                hist_df = self.history_df_loaded
+                if hist_df is None or hist_df.empty:
+                    hist_df = self.safe_read_excel(self.history_file_path.get())
+                    self.history_df_loaded = hist_df
+
+                plan_df = self.plan_df_loaded
+                if plan_df is None or plan_df.empty:
+                    plan_df = self.safe_read_excel(self.plan_file_path.get())
+                    self.plan_df_loaded = plan_df
+
+                # Pass lightweight sample (5 rows) to Gemini
+                mapping = detect_reconciliation_mapping_with_gemini(hist_df.head(5), plan_df.head(5), api_key=api_key)
+                reasoning = mapping.get('reasoning', '')
+                self.root.after(0, lambda: self.add_log(f"💡 Gemini Insight: {reasoning}", "DEBUG"))
+
+                # Schedule UI updates on the main thread
+                self.root.after(0, _apply_mapping_to_ui, mapping, hist_df, plan_df)
+
+            except Exception as e:
+                err_msg = str(e)
+                def _handle_error():
+                    self.add_log(f"❌ Gemini mapping failed: {err_msg}", "ERROR")
+                    self.update_progress(0, "Ready")
+                    if hasattr(self, 'gemini_button') and self.gemini_button:
+                        self.gemini_button.config(state=tk.NORMAL)
+                    messagebox.showerror("Gemini Error", f"Could not complete auto-mapping:\n{err_msg}")
+                self.root.after(0, _handle_error)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def run_reconciliation(self):
         # Validate files
         if not self.history_file_path.get():
@@ -3459,6 +4222,31 @@ class ReconciliationApp:
                 self.plan_load_id_combo['values'] = new_columns
                 self.plan_qty_combo['values'] = new_columns
                 self.plan_split_combo['values'] = new_columns
+
+            # Reapply any Delimiter Split operations configured earlier
+            if hasattr(self, 'history_split_configs') and self.history_split_configs:
+                for cfg in self.history_split_configs:
+                    if cfg['column'] in history_df.columns:
+                        history_df = self.apply_delimiter_split(
+                            history_df, cfg['column'], cfg['separator'], cfg['part_index'],
+                            cfg['new_column_name'], cfg.get('drop_original', False), "History"
+                        )
+                new_columns = history_df.columns.tolist()
+                self.history_load_id_combo['values'] = new_columns
+                self.history_qty_combo['values'] = new_columns
+                self.history_split_combo['values'] = new_columns
+
+            if hasattr(self, 'plan_split_configs') and self.plan_split_configs:
+                for cfg in self.plan_split_configs:
+                    if cfg['column'] in plan_df.columns:
+                        plan_df = self.apply_delimiter_split(
+                            plan_df, cfg['column'], cfg['separator'], cfg['part_index'],
+                            cfg['new_column_name'], cfg.get('drop_original', False), "Plan"
+                        )
+                new_columns = plan_df.columns.tolist()
+                self.plan_load_id_combo['values'] = new_columns
+                self.plan_qty_combo['values'] = new_columns
+                self.plan_split_combo['values'] = new_columns
             
             # Apply text-to-columns if enabled
             if self.history_split_enabled.get() and self.history_original_data is not None:
@@ -3542,6 +4330,46 @@ class ReconciliationApp:
             self.add_log(f"📌 History - Load ID: '{history_load_id_col}', Quantity: '{history_qty_col}'", "INFO")
             self.add_log(f"📌 Plan - Load ID: '{plan_load_id_col}', Quantity: '{plan_qty_col}'", "INFO")
             
+            # Check and strip Client Code prefix from History Item Number to match Display Item Number
+            hist_client_col = None
+            for c in history_df.columns:
+                cl = c.lower().strip().replace('_', ' ').replace('-', ' ')
+                if any(k in cl for k in ['client', 'cust', 'company', 'owner']):
+                    hist_client_col = c
+                    break
+
+            if hist_client_col and history_load_id_col in history_df.columns:
+                history_df, cleaned_h_col, stripped_h = strip_client_code_from_item(
+                    history_df, history_load_id_col, hist_client_col
+                )
+                if stripped_h:
+                    self.add_log(
+                        f"✂️ Detected History Item Number concatenated with Client Code ('{hist_client_col}'). "
+                        f"Stripped prefix to compare with Display Item Number -> '{cleaned_h_col}'",
+                        "INFO"
+                    )
+                    history_load_id_col = cleaned_h_col
+
+            # Check and strip Client Code prefix from Plan Item Number if present
+            plan_client_col = None
+            for c in plan_df.columns:
+                cl = c.lower().strip().replace('_', ' ').replace('-', ' ')
+                if any(k in cl for k in ['client', 'cust', 'company', 'owner']):
+                    plan_client_col = c
+                    break
+
+            if plan_client_col and plan_load_id_col in plan_df.columns:
+                plan_df, cleaned_p_col, stripped_p = strip_client_code_from_item(
+                    plan_df, plan_load_id_col, plan_client_col
+                )
+                if stripped_p:
+                    self.add_log(
+                        f"✂️ Detected Plan Item Number concatenated with Client Code ('{plan_client_col}'). "
+                        f"Stripped prefix to compare with Display Item Number -> '{cleaned_p_col}'",
+                        "INFO"
+                    )
+                    plan_load_id_col = cleaned_p_col
+
             # Convert Load ID columns to string for consistent merging
             self.add_log("🔄 Converting Load ID columns to string type...", "INFO")
             
