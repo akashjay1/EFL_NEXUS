@@ -25,9 +25,13 @@ from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
 
+# outlook_email_gui is imported lazily on first use to avoid blocking startup.
+# ConfigStore / CONFIG_JSON_PATH are resolved at the end of this block.
+_outlook_import_error = None
 try:
     from outlook_email_gui import ConfigStore, CONFIG_JSON_PATH
-except Exception:
+except Exception as _e:
+    _outlook_import_error = _e
     ConfigStore = None
     CONFIG_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -355,11 +359,11 @@ class MainApp:
         # Configure modern TTK styles
         self._setup_ttk_styles()
 
-        # Load icon_2 for sidebar branding
-        self.sidebar_logo = self._load_header_icon(size=(24, 24))
+        # Sidebar logo — placeholder until loaded asynchronously
+        self.sidebar_logo = None
 
-        # Load / Ensure Aurora Background Image
-        self.aurora_base_image = self._load_aurora_image()
+        # Aurora background — None until loaded asynchronously
+        self.aurora_base_image = None
         self.bg_photo = None
         self._resize_timer = None
 
@@ -387,13 +391,8 @@ class MainApp:
         self.nav_buttons = {}  # key -> {"row":..., "accent":..., "label":...}
 
         self.config_store = ConfigStore(CONFIG_JSON_PATH)
-        try:
-            if ConfigStore is not None:
-                from outlook_email_gui import SentLogStore
-                SentLogStore(self.config_store).sort_local_records()
-        except Exception:
-            pass
 
+        # Build and show UI immediately — no blocking I/O before this point
         self._build_layout()
         self._build_sidebar()
         self._build_pages()
@@ -403,14 +402,16 @@ class MainApp:
         # Start non-blocking network monitor loop
         threading.Thread(target=self._network_monitor_worker, daemon=True).start()
 
-        # Warm up heavy tool modules in the background right after startup
-        self.root.after(150, self._start_background_warmup)
+        # Load heavy assets and warm up tool modules in background threads
+        # so they don't delay the first frame appearing.
+        threading.Thread(target=self._load_assets_async, daemon=True).start()
+        self.root.after(100, self._start_background_warmup)
 
-        # Pre-instantiate Tool 4 in idle time so opening User Data Manager is instant without stutter
-        self.root.after(600, self._prewarm_tool4)
+        # Pre-instantiate Tool 4 in idle time (pushed back to avoid early stutter)
+        self.root.after(1500, self._prewarm_tool4)
 
-        # Silent update check 2 seconds after startup
-        self.root.after(2000, lambda: self.check_for_updates(silent=True))
+        # Silent update check 3 seconds after startup
+        self.root.after(3000, lambda: self.check_for_updates(silent=True))
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -471,8 +472,66 @@ class MainApp:
             font=("Segoe UI", 10, "bold")
         )
 
+    def _load_assets_async(self):
+        """Load heavy image assets in a background thread, then push results
+        back to the main thread via root.after so Tkinter stays thread-safe."""
+        # --- Header icon ---
+        logo = None
+        for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
+            icon_path = get_resource_path(icon_name)
+            if os.path.exists(icon_path):
+                try:
+                    import warnings as _w
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore")
+                        img = Image.open(icon_path).convert("RGBA")
+                        logo = img.resize((24, 24), Image.Resampling.LANCZOS)
+                        break
+                except Exception:
+                    pass
+
+        # --- Aurora background ---
+        aurora = None
+        asset_path = get_resource_path(os.path.join("assets", "aurora_bg.png"))
+        if not os.path.exists(asset_path):
+            alt_path = get_resource_path("aurora_bg.png")
+            if os.path.exists(alt_path):
+                asset_path = alt_path
+            else:
+                try:
+                    import generate_aurora_asset
+                    aurora = generate_aurora_asset.generate_aurora_image(1920, 1200, asset_path)
+                except Exception:
+                    pass
+        if aurora is None:
+            try:
+                aurora = Image.open(asset_path)
+            except Exception:
+                aurora = Image.new("RGB", (1920, 1200), (250, 248, 242))
+
+        # Push results to the main thread
+        def _apply_assets():
+            try:
+                if logo is not None:
+                    self.sidebar_logo = ImageTk.PhotoImage(logo)
+                    self._build_sidebar()  # Redraw sidebar with logo now available
+            except Exception:
+                pass
+            try:
+                self.aurora_base_image = aurora
+                # Trigger first aurora render if dashboard canvas already has a size
+                if self.dash_canvas.winfo_width() > 50:
+                    self._update_aurora_bg(
+                        self.dash_canvas.winfo_width(),
+                        self.dash_canvas.winfo_height()
+                    )
+            except Exception:
+                pass
+
+        self.root.after(0, _apply_assets)
+
     def _load_header_icon(self, size=(24, 24)):
-        """Loads and resizes icon_2 for header bars."""
+        """Kept for compatibility — synchronous path (not used on startup)."""
         for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
             icon_path = get_resource_path(icon_name)
             if os.path.exists(icon_path):
@@ -487,7 +546,7 @@ class MainApp:
         return None
 
     def _load_aurora_image(self):
-        """Loads or automatically creates the Aurora Borealis background texture."""
+        """Kept for compatibility — synchronous path (not used on startup)."""
         asset_path = get_resource_path(os.path.join("assets", "aurora_bg.png"))
         if not os.path.exists(asset_path):
             alt_path = get_resource_path("aurora_bg.png")
@@ -499,12 +558,10 @@ class MainApp:
                     return generate_aurora_asset.generate_aurora_image(1920, 1200, asset_path)
                 except Exception:
                     pass
-
         try:
             return Image.open(asset_path)
         except Exception:
-            fallback = Image.new("RGB", (1920, 1200), (250, 248, 242))
-            return fallback
+            return Image.new("RGB", (1920, 1200), (250, 248, 242))
 
     # ------------------------------------------------------------------
     # Network Connectivity Monitor
@@ -561,14 +618,23 @@ class MainApp:
     # Background Module Warmup
     # ------------------------------------------------------------------
     def _start_background_warmup(self):
-        def _warmup():
-            for mod in ("requests", "korber_tool", "reconciliation_tool", "outlook_email_gui", "efldatamanager"):
-                try:
-                    __import__(mod)
-                except Exception:
-                    pass
+        """Import all heavy tool modules in parallel daemon threads so warmup
+        is concurrent instead of sequential. Also runs the Excel sort and
+        remote record sync in the background, never on the main thread."""
 
-            # Pre-warm efldatamanager data in background thread
+        def _import_module(mod):
+            try:
+                __import__(mod)
+            except Exception:
+                pass
+
+        # Spawn one thread per module so they all load concurrently
+        for mod in ("requests", "korber_tool", "reconciliation_tool",
+                    "outlook_email_gui", "efldatamanager"):
+            threading.Thread(target=_import_module, args=(mod,), daemon=True).start()
+
+        def _post_import_tasks():
+            # Pre-warm efldatamanager data
             try:
                 import efldatamanager
                 if hasattr(efldatamanager, "preload_data"):
@@ -576,17 +642,18 @@ class MainApp:
             except Exception:
                 pass
 
-            # Automatically update local and remote records to date order on startup
+            # Sort local sent_log.xlsx and sync remote counts — both I/O-bound,
+            # safe to run in a daemon thread (was previously blocking __init__).
             try:
                 import outlook_email_gui
                 if hasattr(outlook_email_gui, 'SentLogStore'):
                     store = outlook_email_gui.SentLogStore(self.config_store)
                     store.sort_local_records()
-                    store.get_counts()  # Triggers Google Apps Script doGet to sort records on sheet
+                    store.get_counts()  # Triggers Google Apps Script doGet
             except Exception:
                 pass
 
-        threading.Thread(target=_warmup, daemon=True).start()
+        threading.Thread(target=_post_import_tasks, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Update Checker Functions

@@ -5,6 +5,18 @@ echo   EFL NEXUS - Fast Differential Patch Generator
 echo ========================================================
 echo.
 
+:: Detect Python/PyInstaller command (uv or system)
+where uv >nul 2>nul
+if %errorlevel% equ 0 (
+    set "PY_CMD=uv run python"
+    set "PYI_CMD=uv run pyinstaller"
+    echo   [Environment] Using uv runner
+) else (
+    set "PY_CMD=python"
+    set "PYI_CMD=pyinstaller"
+    echo   [Environment] Using system Python
+)
+
 :: Read current version and build number
 if not exist "version.txt" (
     echo [ERROR] version.txt not found in current directory!
@@ -38,7 +50,7 @@ echo.
 
 :: Step 1: Compile directory build
 echo [1/3] Compiling directory-mode EFL_NEXUS with PyInstaller...
-pyinstaller main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=PIL --collect-all=openpyxl --collect-all=customtkinter --collect-all=gspread --collect-all=oauth2client --hidden-import=pandas --hidden-import=openpyxl --hidden-import=openpyxl.styles --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=efldatamanager --hidden-import=gspread --hidden-import=oauth2client --hidden-import=oauth2client.service_account --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=winreg --hidden-import=customtkinter --hidden-import=queue --hidden-import=hashlib --hidden-import=calendar --add-data "version.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "credentials.json;." --add-data "efl_users.json;." --add-data "sent_log.xlsx;." --add-data "assets;assets"
+%PYI_CMD% main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=PIL --collect-all=openpyxl --collect-all=customtkinter --collect-all=gspread --collect-all=oauth2client --hidden-import=pandas --hidden-import=openpyxl --hidden-import=openpyxl.styles --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=efldatamanager --hidden-import=gspread --hidden-import=oauth2client --hidden-import=oauth2client.service_account --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=winreg --hidden-import=customtkinter --hidden-import=queue --hidden-import=hashlib --hidden-import=calendar --add-data "version.txt;." --add-data "build.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "credentials.json;." --add-data "efl_users.json;." --add-data "sent_log.xlsx;." --add-data "templates.xlsx;." --add-data "variance_templates.xlsx;." --add-data "assets;assets"
 if %errorlevel% neq 0 (
     echo [ERROR] PyInstaller compilation failed!
     pause
@@ -56,7 +68,7 @@ if exist "dist\EFL_NEXUS\config.json" del /f /q "dist\EFL_NEXUS\config.json"
 :: Step 3: Run differential patch generator
 echo.
 echo [3/3] Generating differential patch ZIP...
-python create_patch.py --new-dir dist\EFL_NEXUS --auto-find-prev dist\ --version %VER% --build !TARGET_BUILD! --output-dir dist
+%PY_CMD% create_patch.py --new-dir dist\EFL_NEXUS --auto-find-prev dist\ --version %VER% --build !TARGET_BUILD! --output-dir dist
 
 if %errorlevel% equ 0 (
     echo.

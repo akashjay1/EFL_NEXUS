@@ -48,6 +48,7 @@ import html
 import json
 import datetime
 import threading
+import queue
 import requests
 import webbrowser
 import tkinter as tk
@@ -914,8 +915,14 @@ class OutlookEmailApp:
 
         self._subject_before_type = None
         self._last_prefix = None
-        self._is_sending = False
         self.session_dispatch_count = 0
+
+        # --- Send Queue ---
+        # Each item is a dict with all fields needed to send one email.
+        # A single persistent daemon worker drains the queue sequentially.
+        self._send_queue = queue.Queue()
+        self._queue_worker_started = False
+        self._card_id_counter = 0
 
         self._build_ui(self.target)
         self._refresh_counts_label()
@@ -1224,6 +1231,7 @@ class OutlookEmailApp:
         # Configure Log Syntax Tags
         self.activity_text.tag_configure("tag_time", foreground="#64748b", font=("Segoe UI", 8, "bold"))
         self.activity_text.tag_configure("tag_success", foreground="#16a34a", font=("Segoe UI", 9, "bold"))
+        self.activity_text.tag_configure("tag_queued", foreground="#7c3aed", font=("Segoe UI", 9, "bold"))
         self.activity_text.tag_configure("tag_sending", foreground="#d97706", font=("Segoe UI", 9, "bold"))
         self.activity_text.tag_configure("tag_error", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
         self.activity_text.tag_configure("tag_info", foreground="#0284c7", font=("Segoe UI", 9, "bold"))
@@ -1242,19 +1250,117 @@ class OutlookEmailApp:
         self.activity_text.delete("1.0", tk.END)
         self.activity_text.configure(state="disabled")
 
-    def _append_activity_log(self, status, gate_pass, warehouse, send_type, subject,
-                              to_addr=None, cc_addr=None, attachments=None, details=None,
-                              cloud_logged=True, is_history=False):
+    def _create_log_card(self, gate_pass, warehouse, send_type, subject,
+                         to_addr=None, cc_addr=None, attachments=None):
+        """Insert a new QUEUED log card into the activity text widget.
+        Returns a unique card_id so we can update it in-place later."""
+        self._card_id_counter += 1
+        cid = self._card_id_counter
+
+        tag_status = f"card_status_{cid}"
+        tag_sep = f"card_sep_{cid}"
+
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
 
         self.activity_text.configure(state="normal")
 
-        # Header with Timestamp & Status
+        # Header line with Time prefix & Status
+        self.activity_text.insert(tk.END, f"[{now_str}] ", "tag_time")
+        self.activity_text.insert(tk.END, "⏳ Queued\n", ("tag_queued", tag_status))
+
+        # Metadata rows
+        self.activity_text.insert(tk.END, "  • Gate Pass No : ", "tag_label")
+        self.activity_text.insert(tk.END, f"{gate_pass}\n", "tag_val_accent")
+
+        self.activity_text.insert(tk.END, "  • Warehouse    : ", "tag_label")
+        self.activity_text.insert(tk.END, f"{warehouse}\n", "tag_val_bold")
+
+        if send_type:
+            self.activity_text.insert(tk.END, "  • Type         : ", "tag_label")
+            self.activity_text.insert(tk.END, f"{send_type}\n", "tag_val")
+
+        if subject:
+            self.activity_text.insert(tk.END, "  • Subject      : ", "tag_label")
+            self.activity_text.insert(tk.END, f"{subject}\n", "tag_val")
+
+        if to_addr:
+            recipients_summary = to_addr
+            if cc_addr:
+                cc_count = len([c for c in cc_addr.split(";") if c.strip()])
+                recipients_summary += f" (+{cc_count} CC)"
+            self.activity_text.insert(tk.END, "  • Recipients   : ", "tag_label")
+            self.activity_text.insert(tk.END, f"{recipients_summary}\n", "tag_val")
+
+        if attachments is not None:
+            att_count = len(attachments) if isinstance(attachments, list) else int(attachments)
+            att_text = f"{att_count} file(s) attached" if att_count > 0 else "None"
+            self.activity_text.insert(tk.END, "  • Attachments  : ", "tag_label")
+            self.activity_text.insert(tk.END, f"{att_text}\n", "tag_val")
+
+        # Separator marked with tag_sep so outcome lines can be inserted right before it
+        self.activity_text.insert(tk.END, "─" * 46 + "\n", ("tag_sep", tag_sep))
+        self.activity_text.see(tk.END)
+        self.activity_text.configure(state="disabled")
+
+        return cid
+
+    def _update_log_card_status(self, cid, new_status, cloud_logged=True, error_details=None):
+        """Replace the status line of an existing log card in-place."""
+        try:
+            self.activity_text.configure(state="normal")
+            tag_status = f"card_status_{cid}"
+            tag_sep = f"card_sep_{cid}"
+
+            ranges = self.activity_text.tag_ranges(tag_status)
+            if ranges:
+                self.activity_text.delete(ranges[0], ranges[1])
+                if new_status == "SENDING":
+                    self.activity_text.insert(ranges[0], "📤 Sending mail...\n", ("tag_sending", tag_status))
+                elif new_status == "SUCCESS":
+                    self.activity_text.insert(ranges[0], "✓ SUCCESSFULLY SENT\n", ("tag_success", tag_status))
+                elif new_status == "FAILED":
+                    self.activity_text.insert(ranges[0], "✗ SEND FAILED\n", ("tag_error", tag_status))
+                else:
+                    self.activity_text.insert(ranges[0], f"{new_status}\n", ("tag_info", tag_status))
+
+            # Insert outcome line (cloud sync / error) right before the separator
+            if new_status == "SUCCESS":
+                sep_ranges = self.activity_text.tag_ranges(tag_sep)
+                if sep_ranges:
+                    cloud_txt = "✓ Synced to Google Sheet & Excel" if cloud_logged else "Saved to local sent_log.xlsx"
+                    self.activity_text.insert(
+                        sep_ranges[0],
+                        "  • Cloud Sync   : ", "tag_label",
+                        f"{cloud_txt}\n", "tag_success"
+                    )
+            elif new_status == "FAILED" and error_details:
+                sep_ranges = self.activity_text.tag_ranges(tag_sep)
+                if sep_ranges:
+                    self.activity_text.insert(
+                        sep_ranges[0],
+                        "  • Error Details: ", "tag_label",
+                        f"{error_details}\n", "tag_error"
+                    )
+
+            self.activity_text.see(tk.END)
+        except Exception:
+            pass
+        finally:
+            self.activity_text.configure(state="disabled")
+
+    def _append_activity_log(self, status, gate_pass, warehouse, send_type, subject,
+                              to_addr=None, cc_addr=None, attachments=None, details=None,
+                              cloud_logged=True, is_history=False):
+        """Legacy helper kept for history entries (HISTORY status)."""
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+        self.activity_text.configure(state="normal")
+
         self.activity_text.insert(tk.END, f"[{now_str}] ", "tag_time")
         if status == "SUCCESS":
             self.activity_text.insert(tk.END, "✓ SUCCESSFULLY SENT\n", "tag_success")
         elif status == "SENDING":
-            self.activity_text.insert(tk.END, "⏳ SENDING DISPATCH...\n", "tag_sending")
+            self.activity_text.insert(tk.END, "⏳ Sending mail...\n", "tag_sending")
         elif status == "FAILED":
             self.activity_text.insert(tk.END, "✗ SEND FAILED\n", "tag_error")
         elif status == "HISTORY":
@@ -1262,7 +1368,6 @@ class OutlookEmailApp:
         else:
             self.activity_text.insert(tk.END, f"{status}\n", "tag_info")
 
-        # Core Metadata Rows
         self.activity_text.insert(tk.END, "  • Gate Pass No : ", "tag_label")
         self.activity_text.insert(tk.END, f"{gate_pass}\n", "tag_val_accent")
 
@@ -1553,10 +1658,23 @@ class OutlookEmailApp:
             messagebox.showerror("Outlook error",
                                   f"Could not open the preview in Outlook:\n\n{exc}")
 
-    def _send_email(self):
-        if self._is_sending:
+    def _start_queue_worker(self):
+        """Start the single persistent send-queue worker if not already running."""
+        if self._queue_worker_started:
             return
+        self._queue_worker_started = True
+        threading.Thread(target=self._queue_worker_loop, daemon=True).start()
 
+    def _queue_worker_loop(self):
+        """Drain the send queue sequentially; each item is sent one at a time."""
+        while True:
+            job = self._send_queue.get()  # blocks until a job is available
+            if job is None:               # sentinel — not used but kept for safety
+                break
+            self._send_email_worker(**job)
+            self._send_queue.task_done()
+
+    def _send_email(self):
         to_addr, cc_addr, subject, body = self._gather_fields()
         if not self._validate(to_addr, subject):
             return
@@ -1573,7 +1691,7 @@ class OutlookEmailApp:
             f"Subject: {subject if subject else '(none)'}\n"
             f"Type: {send_type if send_type else '(none)'}\n"
             f"Attachments:\n{attachment_summary}\n\n"
-            "Send this email now?"
+            "Add to send queue?"
         )
         if not messagebox.askyesno("Confirm send", confirm_text):
             return
@@ -1583,38 +1701,60 @@ class OutlookEmailApp:
             send_type, subject, template_name
         )
 
-        # Lock UI into Sending state
-        self._is_sending = True
-        self.send_btn.config(text="⏳ Sending...", state="disabled", bg="#94a3b8")
-        self.preview_btn.config(state="disabled")
-        self.activity_status_dot.config(fg="#d97706")
-        self.activity_status_text.config(text="Sending in background...", fg="#d97706")
+        attachments_copy = list(self.attachment_paths)
+        include_sig = self.include_signature_var.get()
 
-        # Initial Sending Log entry
-        self._append_activity_log(
-            status="SENDING",
+        # Create ONE log card for this email immediately (status: Queued)
+        card_id = self._create_log_card(
             gate_pass=gate_pass_num,
             warehouse=warehouse_name,
             send_type=send_type,
             subject=subject,
             to_addr=to_addr,
             cc_addr=cc_addr,
-            attachments=list(self.attachment_paths)
+            attachments=attachments_copy
         )
 
-        attachments_copy = list(self.attachment_paths)
-        include_sig = self.include_signature_var.get()
+        # Update status bar to show queue depth
+        queue_depth = self._send_queue.qsize() + 1
+        self.activity_status_dot.config(fg="#7c3aed")
+        self.activity_status_text.config(
+            text=f"Queue: {queue_depth} email(s) pending", fg="#7c3aed"
+        )
 
-        # Non-blocking async execution
-        threading.Thread(
-            target=self._send_email_worker,
-            args=(to_addr, cc_addr, subject, body, attachments_copy, include_sig,
-                  send_type, gate_pass_num, warehouse_name),
-            daemon=True
-        ).start()
+        # Enqueue the job
+        self._send_queue.put(dict(
+            to_addr=to_addr, cc_addr=cc_addr, subject=subject, body=body,
+            attachment_paths=attachments_copy, include_sig=include_sig,
+            send_type=send_type, gate_pass_num=gate_pass_num,
+            warehouse_name=warehouse_name, card_id=card_id
+        ))
+
+        # Start the persistent worker if this is the first job
+        self._start_queue_worker()
+
+        # Reset form immediately so user can compose the next email
+        self._reset_after_send()
 
     def _send_email_worker(self, to_addr, cc_addr, subject, body, attachment_paths,
-                           include_sig, send_type, gate_pass_num, warehouse_name):
+                           include_sig, send_type, gate_pass_num, warehouse_name,
+                           card_id):
+        """Send one email from the queue; updates the associated log card in-place."""
+
+        # ── Mark card as actively sending ─────────────────────────────────────
+        def _set_sending():
+            self._update_log_card_status(card_id, "SENDING")
+            remaining = self._send_queue.qsize()
+            if remaining > 0:
+                self.activity_status_dot.config(fg="#d97706")
+                self.activity_status_text.config(
+                    text=f"Sending... ({remaining} more queued)", fg="#d97706"
+                )
+            else:
+                self.activity_status_dot.config(fg="#d97706")
+                self.activity_status_text.config(text="Sending mail...", fg="#d97706")
+        self.root.after(0, _set_sending)
+
         try:
             if WIN32COM_AVAILABLE:
                 pythoncom.CoInitialize()
@@ -1646,31 +1786,22 @@ class OutlookEmailApp:
                 self.sent_log.log_send(send_type, subject)
                 cloud_logged = bool(self.config_store.get_webapp_url())
 
-            def on_success():
-                self._is_sending = False
-                style_button(self.send_btn, "primary")
-                self.send_btn.config(text="Send", state="normal")
-                self.preview_btn.config(state="normal")
-                self.activity_status_dot.config(fg="#16a34a")
-                self.activity_status_text.config(text="System Ready", fg="#334155")
+            def on_success(cl=cloud_logged):
+                self._update_log_card_status(card_id, "SUCCESS", cloud_logged=cl)
                 self.session_dispatch_count += 1
                 self.activity_kpi_text.config(text=f"Session: {self.session_dispatch_count}")
-
-                self._append_activity_log(
-                    status="SUCCESS",
-                    gate_pass=gate_pass_num,
-                    warehouse=warehouse_name,
-                    send_type=send_type,
-                    subject=subject,
-                    to_addr=to_addr,
-                    cc_addr=cc_addr,
-                    attachments=attachment_paths,
-                    cloud_logged=cloud_logged
-                )
-
                 self._refresh_counts_label()
                 self._show_send_success_toast(gate_pass_num, warehouse_name)
-                self._reset_after_send()
+                # Update status bar — check if more items are still queued
+                remaining = self._send_queue.qsize()
+                if remaining > 0:
+                    self.activity_status_dot.config(fg="#7c3aed")
+                    self.activity_status_text.config(
+                        text=f"Queue: {remaining} email(s) pending", fg="#7c3aed"
+                    )
+                else:
+                    self.activity_status_dot.config(fg="#16a34a")
+                    self.activity_status_text.config(text="System Ready", fg="#334155")
 
             self.root.after(0, on_success)
 
@@ -1678,24 +1809,16 @@ class OutlookEmailApp:
             err_msg = str(exc)
 
             def on_error(err=err_msg):
-                self._is_sending = False
-                style_button(self.send_btn, "primary")
-                self.send_btn.config(text="Send", state="normal")
-                self.preview_btn.config(state="normal")
-                self.activity_status_dot.config(fg="#dc2626")
-                self.activity_status_text.config(text="Send Failed", fg="#dc2626")
-
-                self._append_activity_log(
-                    status="FAILED",
-                    gate_pass=gate_pass_num,
-                    warehouse=warehouse_name,
-                    send_type=send_type,
-                    subject=subject,
-                    to_addr=to_addr,
-                    cc_addr=cc_addr,
-                    attachments=attachment_paths,
-                    details=err
-                )
+                self._update_log_card_status(card_id, "FAILED", error_details=err)
+                remaining = self._send_queue.qsize()
+                if remaining > 0:
+                    self.activity_status_dot.config(fg="#7c3aed")
+                    self.activity_status_text.config(
+                        text=f"Queue: {remaining} email(s) pending", fg="#7c3aed"
+                    )
+                else:
+                    self.activity_status_dot.config(fg="#dc2626")
+                    self.activity_status_text.config(text="Send Failed", fg="#dc2626")
                 messagebox.showerror("Outlook Send Error", f"Could not send email:\n\n{err}")
 
             self.root.after(0, on_error)

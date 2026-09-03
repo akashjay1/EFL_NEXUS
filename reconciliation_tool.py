@@ -13,6 +13,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import re
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 warnings.filterwarnings('ignore')
 
@@ -665,6 +666,7 @@ class ConcatenateColumnsDialog:
         self.result = None
         self.available_columns = [str(c) for c in df.columns]
         self.selected_columns = []  # ordered list of columns chosen for concatenation
+        self._header_badge_imgs = {}
 
         self.dialog = tk.Toplevel(parent)
         self.dialog.title(title)
@@ -707,10 +709,12 @@ class ConcatenateColumnsDialog:
             text_widget.configure(state=state)
 
         for listbox in (self.available_listbox, self.selected_listbox):
-            listbox.configure(bg=palette['entry_bg'], fg=palette['entry_fg'])
+            listbox.configure(bg=palette['entry_bg'], fg=palette['entry_fg'],
+                              selectbackground='#2563EB', selectforeground='#ffffff')
 
         self.data_tree.tag_configure('oddrow', background=palette['oddrow'])
         self.data_tree.tag_configure('evenrow', background=palette['evenrow'])
+        self.highlight_selected_headers()
 
     def create_widgets(self):
         main_paned = ttk.PanedWindow(self.dialog, orient=tk.VERTICAL)
@@ -722,14 +726,14 @@ class ConcatenateColumnsDialog:
 
         self.instruction_label = tk.Label(
             top_frame,
-            text="Preview of the sheet below. Pick the columns to combine, in order, then choose a separator and a name for the new column.",
+            text="Preview of the sheet below. Pick columns to combine by clicking headers or using the lists below. Choose a separator and name for the new column.",
             font=('Segoe UI', 10),
             wraplength=900,
             justify=tk.LEFT
         )
         self.instruction_label.pack(pady=5, anchor=tk.W)
 
-        data_preview_frame = ttk.LabelFrame(top_frame, text="📊 Data Preview", padding="10")
+        data_preview_frame = ttk.LabelFrame(top_frame, text="📊 Data Preview (Click column header to select/deselect)", padding="10")
         data_preview_frame.pack(fill=tk.BOTH, expand=True)
 
         self.data_tree = self.build_data_preview(data_preview_frame)
@@ -751,6 +755,8 @@ class ConcatenateColumnsDialog:
         ttk.Label(avail_col, text="Available Columns").pack(anchor=tk.W)
         self.available_listbox = tk.Listbox(avail_col, selectmode=tk.EXTENDED, exportselection=False, height=10)
         self.available_listbox.pack(fill=tk.BOTH, expand=True)
+        self.available_listbox.bind("<Double-1>", lambda e: self.add_selected_columns())
+        self.available_listbox.bind("<<ListboxSelect>>", self._on_available_select)
         for col in self.available_columns:
             self.available_listbox.insert(tk.END, col)
 
@@ -766,6 +772,8 @@ class ConcatenateColumnsDialog:
         ttk.Label(sel_col, text="Columns to Concatenate (in order)").pack(anchor=tk.W)
         self.selected_listbox = tk.Listbox(sel_col, selectmode=tk.EXTENDED, exportselection=False, height=10)
         self.selected_listbox.pack(fill=tk.BOTH, expand=True)
+        self.selected_listbox.bind("<Double-1>", lambda e: self.remove_selected_columns())
+        self.selected_listbox.bind("<<ListboxSelect>>", self._on_selected_select)
 
         # --- Right: options + result preview ---
         options_frame = ttk.LabelFrame(bottom_paned, text="⚙️ Options & Preview", padding="10")
@@ -820,6 +828,108 @@ class ConcatenateColumnsDialog:
         status_bar = ttk.Label(self.dialog, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=(5, 2))
         status_bar.pack(fill=tk.X, padx=10, pady=(0, 10))
 
+    def _on_available_select(self, event=None):
+        selections = self.available_listbox.curselection()
+        if selections:
+            col = self.available_listbox.get(selections[-1])
+            self.scroll_to_column(col)
+
+    def _on_selected_select(self, event=None):
+        selections = self.selected_listbox.curselection()
+        if selections:
+            col = self.selected_listbox.get(selections[-1])
+            self.scroll_to_column(col)
+
+    def scroll_to_column(self, col):
+        """Scroll the data_tree horizontally so that the given column is visible."""
+        try:
+            columns = list(self.data_tree['columns'])
+            if col not in columns:
+                return
+            idx = columns.index(col)
+            total_cols = len(columns)
+            if total_cols > 0:
+                fraction = max(0.0, min(1.0, idx / total_cols))
+                self.data_tree.xview_moveto(fraction)
+        except Exception:
+            pass
+
+    def make_header_badge(self, text, bg_color="#2563EB", fg_color="#ffffff", height=20, icon="🔗"):
+        """Create a rounded colored background badge image for Treeview heading."""
+        full_text = f"{icon} {text}" if icon else str(text)
+        try:
+            font = ImageFont.truetype("segoeuib.ttf", 11)
+        except Exception:
+            try:
+                font = ImageFont.truetype("arialbd.ttf", 11)
+            except Exception:
+                try:
+                    font = ImageFont.truetype("segoeui.ttf", 11)
+                except Exception:
+                    font = ImageFont.load_default()
+
+        try:
+            bbox = font.getbbox(full_text)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        except Exception:
+            text_w = len(full_text) * 7
+            text_h = 12
+
+        width = max(text_w + 16, 50)
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Draw filled colored rectangle with rounded corners
+        draw.rounded_rectangle([0, 1, width - 1, height - 1], radius=3, fill=bg_color)
+
+        # Draw text
+        text_x = 8
+        text_y = max(1, (height - text_h) // 2 - 1)
+        draw.text((text_x, text_y), full_text, fill=fg_color, font=font)
+
+        return ImageTk.PhotoImage(img), width
+
+    def highlight_selected_headers(self):
+        """Visually mark the selected columns in the preview Treeview header with colored badges and ordering."""
+        tree = self.data_tree
+        if tree is None:
+            return
+        columns = tree['columns']
+        if not columns:
+            return
+
+        self._header_badge_imgs.clear()
+
+        for col in columns:
+            if col in self.selected_columns:
+                order_num = self.selected_columns.index(col) + 1
+                img, badge_w = self.make_header_badge(
+                    col,
+                    bg_color="#2563EB",
+                    fg_color="#ffffff",
+                    icon=f"🔗 #{order_num}"
+                )
+                extra = badge_w + 8
+                try:
+                    current_w = int(tree.column(col, 'width'))
+                    if current_w < extra:
+                        tree.column(col, width=extra)
+                except Exception:
+                    pass
+                self._header_badge_imgs[col] = img
+                tree.heading(col, image=img, text='', anchor=tk.W, command=lambda c=col: self.toggle_column_from_preview(c))
+            else:
+                tree.heading(col, text=col, image='', anchor=tk.W, command=lambda c=col: self.toggle_column_from_preview(c))
+
+    def toggle_column_from_preview(self, col):
+        """Toggle a column in the concatenation selection when clicking directly on its header in the preview table."""
+        if col in self.selected_columns:
+            self.selected_columns.remove(col)
+        else:
+            self.selected_columns.append(col)
+        self.refresh_lists()
+
     def build_data_preview(self, parent):
         """Build a scrollable Treeview showing the full sheet, mirroring the main window's preview panes."""
         container = ttk.Frame(parent)
@@ -860,9 +970,16 @@ class ConcatenateColumnsDialog:
         tree['columns'] = columns
 
         for col in columns:
-            tree.heading(col, text=col, anchor=tk.W)
-            width = max(80, min(180, (self.df[col].astype(str).str.len().max() if len(self.df) else len(col)) * 7 + 20))
-            tree.column(col, width=int(width), anchor=tk.W, stretch=False)
+            tree.heading(col, text=col, anchor=tk.W, command=lambda c=col: self.toggle_column_from_preview(c))
+            col_str = str(col)
+            try:
+                data_max_len = int(self.df[col].astype(str).str.len().max()) if len(self.df) else len(col_str)
+            except Exception:
+                data_max_len = len(col_str)
+            header_w = len(col_str) * 7.2 + 18
+            data_w = min(200, data_max_len * 6.8 + 14)
+            width = max(50, int(max(header_w, data_w)))
+            tree.column(col, width=width, minwidth=40, anchor=tk.W, stretch=False)
 
         max_rows = 200
         preview_df = self.df.head(max_rows)
@@ -870,6 +987,8 @@ class ConcatenateColumnsDialog:
             values = ["" if pd.isna(v) else str(v) for v in row.tolist()]
             tag = 'evenrow' if i % 2 == 0 else 'oddrow'
             tree.insert("", tk.END, iid=str(i), values=values, tags=(tag,))
+
+        self.highlight_selected_headers()
 
     def add_selected_columns(self):
         """Move the highlighted available columns into the selected (ordered) list."""
@@ -907,7 +1026,7 @@ class ConcatenateColumnsDialog:
             self.selected_listbox.selection_set(new_idx)
 
     def refresh_lists(self):
-        """Redraw both listboxes from self.selected_columns / self.available_columns."""
+        """Redraw both listboxes from self.selected_columns / self.available_columns and update header highlights."""
         self.selected_listbox.delete(0, tk.END)
         for col in self.selected_columns:
             self.selected_listbox.insert(tk.END, col)
@@ -919,6 +1038,8 @@ class ConcatenateColumnsDialog:
 
         count = len(self.selected_columns)
         self.status_var.set(f"{count} column(s) selected" + ("" if count >= 2 else " - pick at least two columns to combine"))
+        self.highlight_selected_headers()
+        self.preview_result()
 
     def _resolve_separator(self):
         sep = self.separator_var.get()
@@ -1113,16 +1234,9 @@ class SendVarianceDialog(tk.Toplevel):
 
         ttk.Button(
             msg_tools,
-            text="📋 Paste Table from Excel",
-            command=self._paste_excel_table
+            text="⚡ Insert the Variance",
+            command=self._insert_variance_from_report
         ).pack(side=tk.RIGHT, padx=(4, 0))
-
-        if self.attachment_paths:
-            ttk.Button(
-                msg_tools,
-                text="⚡ Insert from Attached Report",
-                command=self._insert_variance_from_report
-            ).pack(side=tk.RIGHT, padx=(4, 0))
 
         text_scroll_frame = ttk.Frame(body_frame)
         text_scroll_frame.pack(fill=tk.BOTH, expand=True)
@@ -1316,29 +1430,42 @@ class SendVarianceDialog(tk.Toplevel):
             self.body_text.insert(tk.INSERT, plain_text)
 
     def _insert_variance_from_report(self):
-        """Loads and formats the variance table directly from the attached Excel report."""
-        if not self.attachment_paths:
-            messagebox.showinfo("No Report", "No reconciliation report file is attached.")
-            return
+        """Loads and formats the entire variance sheet content directly from the reconciliation report without filtering."""
+        excel_path = None
+        for p in self.attachment_paths:
+            if os.path.isfile(p) and p.lower().endswith((".xlsx", ".xls", ".xlsm", ".xlsb")):
+                excel_path = p
+                break
 
-        excel_path = self.attachment_paths[0]
-        if not os.path.isfile(excel_path) or not excel_path.endswith((".xlsx", ".xls", ".xlsm")):
-            messagebox.showinfo("No Report", "The first attached file is not an Excel report.")
-            return
+        if not excel_path:
+            excel_path = filedialog.askopenfilename(
+                title="Select Reconciliation Report with Variance Sheet",
+                filetypes=[("Excel files", "*.xlsx;*.xls;*.xlsm;*.xlsb"), ("All files", "*.*")]
+            )
+            if not excel_path:
+                return
+            if excel_path not in self.attachment_paths:
+                self.attachment_paths.append(excel_path)
+                self._refresh_attachment_list()
 
         try:
             import pandas as pd
-            df = pd.read_excel(excel_path, sheet_name="variance")
-            if len(df) > 60:
-                var_df = df[df["Status"] != "MATCH"]
-                if 0 < len(var_df) <= 60:
-                    df = var_df
-                else:
-                    df = df.head(50)
+            xl = pd.ExcelFile(excel_path)
+            target_sheet = None
+            for s in xl.sheet_names:
+                if "variance" in s.lower():
+                    target_sheet = s
+                    break
+            if not target_sheet:
+                target_sheet = xl.sheet_names[0]
 
+            df = pd.read_excel(excel_path, sheet_name=target_sheet)
+            df = df.fillna("")
+
+            # Convert all rows and columns to grid table without filtering or truncation
             grid = [df.columns.tolist()] + df.astype(str).values.tolist()
             self._insert_grid_table(grid)
-            messagebox.showinfo("Table Inserted", f"Successfully inserted {len(grid)-1} rows from variance report into message body.")
+            messagebox.showinfo("Variance Inserted", f"Successfully inserted {len(grid)-1} rows from '{target_sheet}' sheet into message body.")
         except Exception as e:
             messagebox.showerror("Read Error", f"Could not read variance sheet from Excel file:\n\n{e}")
 
@@ -2053,7 +2180,7 @@ class ReconciliationApp:
         # History column selection (stacked to fit the narrower left column)
         history_load_id_row = ttk.Frame(file_frame)
         history_load_id_row.pack(fill=tk.X, pady=2, padx=(10, 0))
-        ttk.Label(history_load_id_row, text="Load ID Column:", font=('Segoe UI', 9), width=15).pack(side=tk.LEFT)
+        ttk.Label(history_load_id_row, text="🔑 Primary Key (Load ID):", font=('Segoe UI', 9, 'bold'), width=22).pack(side=tk.LEFT)
         self.history_load_id_combo = ttk.Combobox(
             history_load_id_row, 
             textvariable=self.history_load_id_col,
@@ -2063,7 +2190,7 @@ class ReconciliationApp:
         
         history_qty_row = ttk.Frame(file_frame)
         history_qty_row.pack(fill=tk.X, pady=2, padx=(10, 0))
-        ttk.Label(history_qty_row, text="Quantity Column:", font=('Segoe UI', 9), width=15).pack(side=tk.LEFT)
+        ttk.Label(history_qty_row, text="🔢 Quantity Column:", font=('Segoe UI', 9), width=22).pack(side=tk.LEFT)
         self.history_qty_combo = ttk.Combobox(
             history_qty_row,
             textvariable=self.history_qty_col,
@@ -2134,7 +2261,7 @@ class ReconciliationApp:
         # Plan column selection (stacked to fit the narrower left column)
         plan_load_id_row = ttk.Frame(file_frame)
         plan_load_id_row.pack(fill=tk.X, pady=2, padx=(10, 0))
-        ttk.Label(plan_load_id_row, text="Load ID Column:", font=('Segoe UI', 9), width=15).pack(side=tk.LEFT)
+        ttk.Label(plan_load_id_row, text="🔑 Primary Key (Load ID):", font=('Segoe UI', 9, 'bold'), width=22).pack(side=tk.LEFT)
         self.plan_load_id_combo = ttk.Combobox(
             plan_load_id_row,
             textvariable=self.plan_load_id_col,
@@ -2144,7 +2271,7 @@ class ReconciliationApp:
         
         plan_qty_row = ttk.Frame(file_frame)
         plan_qty_row.pack(fill=tk.X, pady=2, padx=(10, 0))
-        ttk.Label(plan_qty_row, text="Quantity Column:", font=('Segoe UI', 9), width=15).pack(side=tk.LEFT)
+        ttk.Label(plan_qty_row, text="🔢 Quantity Column:", font=('Segoe UI', 9), width=22).pack(side=tk.LEFT)
         self.plan_qty_combo = ttk.Combobox(
             plan_qty_row,
             textvariable=self.plan_qty_col,
@@ -2232,19 +2359,19 @@ class ReconciliationApp:
         right_paned = ttk.PanedWindow(right_column, orient=tk.VERTICAL)
         right_paned.pack(fill=tk.BOTH, expand=True)
 
-        preview_frame = ttk.LabelFrame(right_paned, text="📊 Data Preview (Load ID 🔑 and Quantity 🔢 columns are highlighted)", padding="10")
-        right_paned.add(preview_frame, weight=3)
+        preview_frame = ttk.LabelFrame(right_paned, text="📊 Data Preview", padding="10")
+        right_paned.add(preview_frame, weight=4)
 
-        preview_paned = ttk.PanedWindow(preview_frame, orient=tk.HORIZONTAL)
+        preview_paned = ttk.PanedWindow(preview_frame, orient=tk.VERTICAL)
         preview_paned.pack(fill=tk.BOTH, expand=True)
 
-        # Left: Loading History preview
+        # Top: Loading History preview
         history_preview_frame = ttk.Frame(preview_paned)
         preview_paned.add(history_preview_frame, weight=1)
 
         history_preview_header = ttk.Frame(history_preview_frame)
-        history_preview_header.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(history_preview_header, text="Loading History", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        history_preview_header.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(history_preview_header, text="Loading History (Top)", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
         ttk.Label(history_preview_header, textvariable=self.history_preview_count, font=('Segoe UI', 8), foreground='gray').pack(side=tk.LEFT, padx=(10, 0))
         ttk.Button(
             history_preview_header,
@@ -2255,13 +2382,13 @@ class ReconciliationApp:
 
         self.history_tree = self.build_preview_pane(history_preview_frame)
 
-        # Right: Load Plan preview
+        # Bottom: Load Plan preview
         plan_preview_frame = ttk.Frame(preview_paned)
         preview_paned.add(plan_preview_frame, weight=1)
 
         plan_preview_header = ttk.Frame(plan_preview_frame)
-        plan_preview_header.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(plan_preview_header, text="Load Plan", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        plan_preview_header.pack(fill=tk.X, pady=(6, 4))
+        ttk.Label(plan_preview_header, text="Load Plan (Bottom)", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
         ttk.Label(plan_preview_header, textvariable=self.plan_preview_count, font=('Segoe UI', 8), foreground='gray').pack(side=tk.LEFT, padx=(10, 0))
         ttk.Button(
             plan_preview_header,
@@ -2550,11 +2677,47 @@ class ReconciliationApp:
 
         return tree
 
-    def make_swatch(self, color, width=18, height=4):
+    def make_swatch(self, color, width=22, height=5):
         """Create a small solid-color PhotoImage to use as a Treeview heading marker"""
         img = tk.PhotoImage(width=width, height=height)
         img.put(color, to=(0, 0, width, height))
         return img
+
+    def make_header_badge(self, text, bg_color="#F59E0B", fg_color="#ffffff", height=20, icon="🔑"):
+        """Create a rounded colored background badge image for Treeview heading."""
+        full_text = f"{icon} {text}" if icon else str(text)
+        try:
+            font = ImageFont.truetype("segoeuib.ttf", 11)
+        except Exception:
+            try:
+                font = ImageFont.truetype("arialbd.ttf", 11)
+            except Exception:
+                try:
+                    font = ImageFont.truetype("segoeui.ttf", 11)
+                except Exception:
+                    font = ImageFont.load_default()
+
+        try:
+            bbox = font.getbbox(full_text)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        except Exception:
+            text_w = len(full_text) * 7
+            text_h = 12
+
+        width = max(text_w + 16, 50)
+        img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Draw filled colored rectangle with rounded corners
+        draw.rounded_rectangle([0, 1, width - 1, height - 1], radius=3, fill=bg_color)
+
+        # Draw text
+        text_x = 8
+        text_y = max(1, (height - text_h) // 2 - 1)
+        draw.text((text_x, text_y), full_text, fill=fg_color, font=font)
+
+        return ImageTk.PhotoImage(img), width
 
     def populate_preview(self, file_type):
         """Fill the given preview Treeview with data from the loaded dataframe"""
@@ -2583,8 +2746,15 @@ class ReconciliationApp:
 
         for col in columns:
             tree.heading(col, text=col, anchor=tk.W)
-            width = max(80, min(180, (df[col].astype(str).str.len().max() if len(df) else len(col)) * 7 + 20))
-            tree.column(col, width=int(width), anchor=tk.W, stretch=False)
+            col_str = str(col)
+            try:
+                data_max_len = int(df[col].astype(str).str.len().max()) if len(df) else len(col_str)
+            except Exception:
+                data_max_len = len(col_str)
+            header_w = len(col_str) * 7.2 + 18
+            data_w = min(220, data_max_len * 6.8 + 14)
+            width = max(50, int(max(header_w, data_w)))
+            tree.column(col, width=width, minwidth=40, anchor=tk.W, stretch=False)
 
         preview_df = df.head(self.PREVIEW_MAX_ROWS)
         for i, (_, row) in enumerate(preview_df.iterrows()):
@@ -2602,7 +2772,7 @@ class ReconciliationApp:
         self.highlight_preview_columns(file_type)
 
     def highlight_preview_columns(self, file_type):
-        """Visually mark the selected Load ID and Quantity columns in the preview header"""
+        """Visually mark the selected Primary Key (Load ID) and Quantity columns in the preview header with colored background"""
         if file_type == 'history':
             tree = self.history_tree
             load_id_col = self.history_load_id_col.get()
@@ -2625,23 +2795,32 @@ class ReconciliationApp:
 
         for col in columns:
             if col == load_id_col and col == qty_col:
-                label = f"🔑🔢 {col}"
-                img = self.make_swatch('#F1C40F')  # gold/teal combo not possible, use gold
+                img, badge_w = self.make_header_badge(col, bg_color="#F59E0B", fg_color="#ffffff", icon="🔑🔢")
+                extra = badge_w + 8
             elif col == load_id_col:
-                label = f"🔑 {col}"
-                img = self.make_swatch('#F1C40F')  # gold - Load ID
+                img, badge_w = self.make_header_badge(col, bg_color="#F59E0B", fg_color="#ffffff", icon="🔑")
+                extra = badge_w + 8
             elif col == qty_col:
-                label = f"🔢 {col}"
-                img = self.make_swatch('#1ABC9C')  # teal - Quantity
+                img, badge_w = self.make_header_badge(col, bg_color="#10B981", fg_color="#ffffff", icon="🔢")
+                extra = badge_w + 8
             else:
-                label = col
                 img = None
+                extra = 0
+
+            # Sizing check: snugly fit header badge without over-extending
+            if extra > 0:
+                try:
+                    current_w = int(tree.column(col, 'width'))
+                    if current_w < extra:
+                        tree.column(col, width=extra)
+                except Exception:
+                    pass
 
             if img is not None:
                 img_store[col] = img
-                tree.heading(col, text=label, image=img, anchor=tk.W)
+                tree.heading(col, image=img, text='', anchor=tk.W)
             else:
-                tree.heading(col, text=label, image='', anchor=tk.W)
+                tree.heading(col, text=col, image='', anchor=tk.W)
 
     def on_preview_row_select(self, tree):
         """Show the values of the selected preview row in the status bar"""
@@ -2660,14 +2839,14 @@ class ReconciliationApp:
             marker = ""
             if tree is self.history_tree:
                 if col == self.history_load_id_col.get():
-                    marker = "🔑"
+                    marker = "🔑 "
                 elif col == self.history_qty_col.get():
-                    marker = "🔢"
+                    marker = "🔢 "
             else:
                 if col == self.plan_load_id_col.get():
-                    marker = "🔑"
+                    marker = "🔑 "
                 elif col == self.plan_qty_col.get():
-                    marker = "🔢"
+                    marker = "🔢 "
             pairs.append(f"{marker}{col}: {val}" if marker else f"{col}: {val}")
 
         row_num = int(item) + 1
@@ -2780,12 +2959,18 @@ class ReconciliationApp:
                 self.history_load_id_combo['values'] = new_columns
                 self.history_qty_combo['values'] = new_columns
                 self.history_split_combo['values'] = new_columns
-                if self.history_load_id_col.get() not in new_columns:
-                    self.history_load_id_col.set("")
+                # Auto-select the second part of the split columns as Primary Key (Load ID)
+                part_2_col = f"{column_name}_part_2"
+                if part_2_col in new_columns:
+                    self.history_load_id_col.set(part_2_col)
+                elif len(new_columns) > 1:
+                    self.history_load_id_col.set(new_columns[1])
+                elif new_columns:
+                    self.history_load_id_col.set(new_columns[0])
                 if self.history_qty_col.get() not in new_columns:
                     self.history_qty_col.set("")
                 self.populate_preview('history')
-                self.add_log("👁️ Loading History preview updated with split columns", "INFO")
+                self.add_log("👁️ Loading History preview updated with split columns at beginning", "INFO")
                 
         elif file_type == 'plan':
             if not self.plan_split_column.get():
@@ -2826,12 +3011,18 @@ class ReconciliationApp:
                 self.plan_load_id_combo['values'] = new_columns
                 self.plan_qty_combo['values'] = new_columns
                 self.plan_split_combo['values'] = new_columns
-                if self.plan_load_id_col.get() not in new_columns:
-                    self.plan_load_id_col.set("")
+                # Auto-select the second part of the split columns as Primary Key (Load ID)
+                part_2_col = f"{column_name}_part_2"
+                if part_2_col in new_columns:
+                    self.plan_load_id_col.set(part_2_col)
+                elif len(new_columns) > 1:
+                    self.plan_load_id_col.set(new_columns[1])
+                elif new_columns:
+                    self.plan_load_id_col.set(new_columns[0])
                 if self.plan_qty_col.get() not in new_columns:
                     self.plan_qty_col.set("")
                 self.populate_preview('plan')
-                self.add_log("👁️ Load Plan preview updated with split columns", "INFO")
+                self.add_log("👁️ Load Plan preview updated with split columns at beginning", "INFO")
     
     def clean_whole_number_columns(self, df):
         """Excel stores plain numbers without an explicit format as floats, so
@@ -2893,18 +3084,79 @@ class ReconciliationApp:
             combo_qty['values'] = columns
             
             # Auto-select columns
+            target_var_load_id.set("")
+            target_var_qty.set("")
+
+            # 1. Primary Key / Load ID auto-selection
             for col in columns:
-                col_lower = col.lower().strip()
-                if 'load' in col_lower and ('id' in col_lower or '#' in col_lower or 'number' in col_lower):
-                    if not target_var_load_id.get():
+                col_lower = str(col).lower().strip()
+                if 'load' in col_lower and ('id' in col_lower or '#' in col_lower or 'number' in col_lower or 'no' in col_lower):
+                    target_var_load_id.set(col)
+                    break
+
+            if not target_var_load_id.get():
+                for col in columns:
+                    col_lower = str(col).lower().strip()
+                    if 'load' in col_lower:
                         target_var_load_id.set(col)
-                if 'qty' in col_lower or 'quantity' in col_lower or 'pick' in col_lower or 'actual' in col_lower:
-                    if not target_var_qty.get():
-                        target_var_qty.set(col)
-            
-            # Fallback selections
+                        break
+
+            if not target_var_load_id.get():
+                for col in columns:
+                    col_lower = str(col).lower().strip()
+                    if 'id' in col_lower or 'key' in col_lower:
+                        target_var_load_id.set(col)
+                        break
+
             if not target_var_load_id.get() and columns:
                 target_var_load_id.set(columns[0])
+
+            # 2. Quantity column auto-selection with priority for specified column names:
+            # - QUANTITY
+            # - Actual Qty
+            # - Pln Qty
+            # - Loaded Qty
+            # - Planned Qty
+            target_qty_patterns = [
+                "quantity",
+                "actual qty",
+                "pln qty",
+                "loaded qty",
+                "planned qty"
+            ]
+
+            # Priority 1: Exact / normalized matches to user-specified quantity list
+            for pattern in target_qty_patterns:
+                pat_norm = re.sub(r'[^a-z0-9]', '', pattern.lower())
+                for col in columns:
+                    col_norm = re.sub(r'[^a-z0-9]', '', str(col).lower())
+                    if col_norm == pat_norm:
+                        target_var_qty.set(col)
+                        break
+                if target_var_qty.get():
+                    break
+
+            # Priority 2: Substring matches to user-specified quantity patterns
+            if not target_var_qty.get():
+                for pattern in target_qty_patterns:
+                    pat_norm = re.sub(r'[^a-z0-9]', '', pattern.lower())
+                    for col in columns:
+                        col_norm = re.sub(r'[^a-z0-9]', '', str(col).lower())
+                        if pat_norm in col_norm:
+                            target_var_qty.set(col)
+                            break
+                    if target_var_qty.get():
+                        break
+
+            # Priority 3: General quantity heuristic keywords
+            if not target_var_qty.get():
+                for col in columns:
+                    col_lower = str(col).lower().strip()
+                    if any(term in col_lower for term in ['qty', 'quantity', 'pick', 'actual']):
+                        target_var_qty.set(col)
+                        break
+
+            # Priority 4: Fallback selections
             if not target_var_qty.get() and columns:
                 target_var_qty.set(columns[-1])
             
@@ -2922,7 +3174,7 @@ class ReconciliationApp:
             return []
     
     def apply_text_to_columns(self, df, split_column, split_data, file_type):
-        """Apply the text-to-columns split to the dataframe"""
+        """Apply the text-to-columns split to the dataframe and place new columns at the beginning"""
         if split_data is None or not split_column:
             return df
         
@@ -2931,13 +3183,19 @@ class ReconciliationApp:
         df_copy = df.copy()
         df_copy = df_copy.drop(columns=[split_column])
         
+        new_cols_created = []
         for i in range(len(split_data[0])):
             new_col_name = f"{split_column}_part_{i+1}"
             values = [row[i] if i < len(row) else "" for row in split_data]
             df_copy[new_col_name] = values
+            new_cols_created.append(new_col_name)
             self.add_log(f"   Created column: {new_col_name}", "DEBUG")
         
-        self.add_log(f"✅ Text-to-columns applied: {len(split_data[0])} new columns created", "SUCCESS")
+        # Place newly split columns at the very beginning of the sheet / DataFrame
+        remaining_cols = [c for c in df_copy.columns if c not in new_cols_created]
+        df_copy = df_copy[new_cols_created + remaining_cols]
+        
+        self.add_log(f"✅ Text-to-columns applied: {len(split_data[0])} new columns placed at the top/beginning", "SUCCESS")
         return df_copy
     
     def open_concatenate_dialog(self, file_type):
@@ -2978,14 +3236,14 @@ class ReconciliationApp:
             self.history_load_id_combo['values'] = new_columns
             self.history_qty_combo['values'] = new_columns
             self.history_split_combo['values'] = new_columns
-            if self.history_load_id_col.get() not in new_columns:
-                self.history_load_id_col.set("")
+            # Automatically set newly concatenated column as Primary Key (Load ID)
+            self.history_load_id_col.set(new_column_name)
             if self.history_qty_col.get() not in new_columns:
                 self.history_qty_col.set("")
             if self.history_split_column.get() not in new_columns:
                 self.history_split_column.set("")
             self.populate_preview('history')
-            self.add_log("👁️ Loading History preview updated with concatenated column", "INFO")
+            self.add_log("👁️ Loading History preview updated with concatenated column at beginning", "INFO")
         else:
             self.plan_concat_configs.append(config)
             self.plan_df_loaded = new_df
@@ -2993,17 +3251,17 @@ class ReconciliationApp:
             self.plan_load_id_combo['values'] = new_columns
             self.plan_qty_combo['values'] = new_columns
             self.plan_split_combo['values'] = new_columns
-            if self.plan_load_id_col.get() not in new_columns:
-                self.plan_load_id_col.set("")
+            # Automatically set newly concatenated column as Primary Key (Load ID)
+            self.plan_load_id_col.set(new_column_name)
             if self.plan_qty_col.get() not in new_columns:
                 self.plan_qty_col.set("")
             if self.plan_split_column.get() not in new_columns:
                 self.plan_split_column.set("")
             self.populate_preview('plan')
-            self.add_log("👁️ Load Plan preview updated with concatenated column", "INFO")
+            self.add_log("👁️ Load Plan preview updated with concatenated column at beginning", "INFO")
     
     def apply_column_concatenation(self, df, columns, separator, new_column_name, drop_originals, file_type):
-        """Combine the given columns (in order) into a single new column, joined by separator"""
+        """Combine the given columns (in order) into a single new column, joined by separator, placed at the beginning"""
         self.add_log(f"🔗 Concatenating {file_type} columns into '{new_column_name}': {', '.join(columns)}", "INFO")
         
         df_copy = df.copy()
@@ -3022,7 +3280,11 @@ class ReconciliationApp:
             df_copy = df_copy.drop(columns=cols_to_drop)
             self.add_log(f"   Removed original columns: {', '.join(cols_to_drop)}", "DEBUG")
         
-        self.add_log(f"✅ Concatenation applied: '{new_column_name}' created from {len(columns)} column(s)", "SUCCESS")
+        # Place newly concatenated column at the very beginning of the sheet / DataFrame
+        remaining_cols = [c for c in df_copy.columns if c != new_column_name]
+        df_copy = df_copy[[new_column_name] + remaining_cols]
+        
+        self.add_log(f"✅ Concatenation applied: '{new_column_name}' placed at the top/beginning", "SUCCESS")
         return df_copy
     
     def browse_history_file(self):
