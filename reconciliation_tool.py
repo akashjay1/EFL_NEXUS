@@ -2608,30 +2608,40 @@ class ReconciliationApp:
         """Add message to log with timestamp and color"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}\n"
-        
-        self.log_text.config(state=tk.NORMAL)
-        
-        tags = {
-            "INFO": "info",
-            "SUCCESS": "success",
-            "WARNING": "warning",
-            "ERROR": "error",
-            "DEBUG": "debug"
-        }
-        
-        tag = tags.get(level, "info")
-        self.log_text.insert(tk.END, log_entry, tag)
-        
-        self.log_text.tag_configure("info", foreground="#ECF0F1")
-        self.log_text.tag_configure("success", foreground="#2ECC71")
-        self.log_text.tag_configure("warning", foreground="#F1C40F")
-        self.log_text.tag_configure("error", foreground="#E74C3C")
-        self.log_text.tag_configure("debug", foreground="#3498DB")
-        
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
-        
         self.log_messages.append(log_entry)
+
+        def _apply():
+            try:
+                if not hasattr(self, 'log_text') or not self.log_text.winfo_exists():
+                    return
+                self.log_text.config(state=tk.NORMAL)
+                
+                tags = {
+                    "INFO": "info",
+                    "SUCCESS": "success",
+                    "WARNING": "warning",
+                    "ERROR": "error",
+                    "DEBUG": "debug"
+                }
+                
+                tag = tags.get(level, "info")
+                self.log_text.insert(tk.END, log_entry, tag)
+                
+                self.log_text.tag_configure("info", foreground="#ECF0F1")
+                self.log_text.tag_configure("success", foreground="#2ECC71")
+                self.log_text.tag_configure("warning", foreground="#F1C40F")
+                self.log_text.tag_configure("error", foreground="#E74C3C")
+                self.log_text.tag_configure("debug", foreground="#3498DB")
+                
+                self.log_text.see(tk.END)
+                self.log_text.config(state=tk.DISABLED)
+            except Exception:
+                pass
+
+        if threading.current_thread() is threading.main_thread():
+            _apply()
+        else:
+            self.root.after(0, _apply)
         
     def clear_log(self):
         """Clear the log text widget"""
@@ -3445,9 +3455,17 @@ class ReconciliationApp:
         self.add_log("🧹 All fields cleared", "INFO")
     
     def update_progress(self, value, status):
-        self.progress_var.set(value)
-        self.status_var.set(status)
-        self.root.update_idletasks()
+        def _apply():
+            try:
+                self.progress_var.set(value)
+                self.status_var.set(status)
+            except Exception:
+                pass
+
+        if threading.current_thread() is threading.main_thread():
+            _apply()
+        else:
+            self.root.after(0, _apply)
     
     def safe_read_excel(self, file_path):
         """Safely read Excel file with multiple engine attempts"""
@@ -3700,9 +3718,14 @@ class ReconciliationApp:
                         cfg['drop_originals'], "History"
                     )
                 new_columns = history_df.columns.tolist()
-                self.history_load_id_combo['values'] = new_columns
-                self.history_qty_combo['values'] = new_columns
-                self.history_split_combo['values'] = new_columns
+                def _update_history_combos(cols=new_columns):
+                    try:
+                        self.history_load_id_combo['values'] = cols
+                        self.history_qty_combo['values'] = cols
+                        self.history_split_combo['values'] = cols
+                    except Exception:
+                        pass
+                self.root.after(0, _update_history_combos)
             
             if self.plan_concat_configs:
                 for cfg in self.plan_concat_configs:
@@ -3718,9 +3741,14 @@ class ReconciliationApp:
                         cfg['drop_originals'], "Plan"
                     )
                 new_columns = plan_df.columns.tolist()
-                self.plan_load_id_combo['values'] = new_columns
-                self.plan_qty_combo['values'] = new_columns
-                self.plan_split_combo['values'] = new_columns
+                def _update_plan_combos(cols=new_columns):
+                    try:
+                        self.plan_load_id_combo['values'] = cols
+                        self.plan_qty_combo['values'] = cols
+                        self.plan_split_combo['values'] = cols
+                    except Exception:
+                        pass
+                self.root.after(0, _update_plan_combos)
             
             # Apply text-to-columns if enabled
             if self.history_split_enabled.get() and self.history_original_data is not None:

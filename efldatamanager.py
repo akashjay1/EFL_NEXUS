@@ -407,18 +407,13 @@ def get_cached_records(force_refresh=False, sheet_name=None):
     current_time = datetime.now().timestamp()
 
     if not force_refresh:
-        if sheet_name == SHEET3_NAME:
-            if _records3_cache is not None and cache_key in _cache_timestamps:
-                if current_time - _cache_timestamps[cache_key] < 60:
-                    return _records3_cache
-        elif sheet_name == SHEET2_NAME:
-            if _records2_cache is not None and cache_key in _cache_timestamps:
-                if current_time - _cache_timestamps[cache_key] < 60:
-                    return _records2_cache
-        else:
-            if _records_cache is not None and cache_key in _cache_timestamps:
-                if current_time - _cache_timestamps[cache_key] < 60:
-                    return _records_cache
+        target_cache = _records3_cache if sheet_name == SHEET3_NAME else (_records2_cache if sheet_name == SHEET2_NAME else _records_cache)
+        if target_cache is not None:
+            # If cache is fresh, or if called on the main GUI thread, return immediately without blocking UI
+            if (current_time - _cache_timestamps.get(cache_key, 0) < 60) or (threading.current_thread() is threading.main_thread()):
+                if current_time - _cache_timestamps.get(cache_key, 0) >= 60:
+                    threading.Thread(target=fetch_all_sheets_batch, daemon=True).start()
+                return target_cache
 
     # If force_refresh or not in memory, use fast batch fetch
     success, _ = fetch_all_sheets_batch()
@@ -1065,8 +1060,7 @@ class EFLApp:
         global _current_app_instance
         _current_app_instance = self
 
-        # Ensure local disk cache is in memory for 0s startup
-        _load_local_disk_cache()
+        # Disk cache already loaded at module level (line 269) — no second read needed
 
         # Check for remembered session
         remembered = get_remembered_user()
@@ -1441,6 +1435,13 @@ class EFLApp:
 
     def cancel_all_timers(self):
         """Cancel background polling and message timers"""
+        if getattr(self, '_log_refresh_timer', None):
+            try:
+                self.root.after_cancel(self._log_refresh_timer)
+            except Exception:
+                pass
+            self._log_refresh_timer = None
+
         if self.status_check_timer:
             try:
                 self.root.after_cancel(self.status_check_timer)
@@ -1495,27 +1496,38 @@ class EFLApp:
         self.is_edit_mode_enabled = True
         self.is_first_load = True
 
-        # Build UI Components
+        # Build lightweight header immediately (fast — no CTkScrollableFrame / buttons)
         self.setup_header(self.content_frame)
         self.setup_top_user_date_row(self.content_frame)
-        self.setup_section1(self.content_frame)
-        self.setup_section2(self.content_frame)
-        self.setup_live_activity_log(self.content_frame)
-        self.setup_footer(self.content_frame)
 
-        # Reset inputs
+        # Reset inputs after layout is fully committed
         self.root.after(20, self.reset_all_inputs)
 
-        # If cache is available, display counts immediately!
-        if _records_cache:
-            self.update_status(True)
-            self.update_all_counts()
+        # If cache is available, show counts as soon as sections are built
+        _show_cached_counts = bool(_records_cache)
 
-        # Load fresh data in background via fast single-batch API call
-        self.root.after(50, self.load_data_background)
+        # Build heavyweight sections progressively across event-loop ticks so the
+        # header appears immediately and the rest populates without blocking the UI.
+        def _build_section1():
+            self.setup_section1(self.content_frame)
+            self.root.after(0, _build_section2)
 
-        # Start status check
-        self.root.after(5000, self.check_connection_status)
+        def _build_section2():
+            self.setup_section2(self.content_frame)
+            self.root.after(0, _build_log)
+
+        def _build_log():
+            self.setup_live_activity_log(self.content_frame)
+            self.setup_footer(self.content_frame)
+            if _show_cached_counts:
+                self.update_status(True)
+                self.update_all_counts()
+            # Load fresh data in background via fast single-batch API call
+            self.root.after(0, self.load_data_background)
+            # Start status check
+            self.root.after(5000, self.check_connection_status)
+
+        self.root.after(0, _build_section1)
 
     def load_data_background(self):
         """Load data in background thread using fast single-batch API call"""
@@ -1579,7 +1591,9 @@ class EFLApp:
                 self.last_latency_ms = max(1, int((time.time() - t0) * 1000))
             except Exception:
                 status = False
-            add_activity_log("CONNECTION", f"Heartbeat check: {'Online (Synchronized)' if status else 'Offline'}", "SUCCESS" if status else "WARN")
+            prev_status = getattr(self, 'connection_status', None)
+            if prev_status != status or not status:
+                add_activity_log("CONNECTION", f"Heartbeat check: {'Online (Synchronized)' if status else 'Offline'}", "SUCCESS" if status else "WARN")
             self.root.after(0, lambda: self.update_status(status))
 
         threading.Thread(target=check, daemon=True).start()
@@ -1635,7 +1649,8 @@ class EFLApp:
             except Exception as e:
                 print(f"Error resetting dropdown: {e}")
 
-        self.root.update_idletasks()
+
+
 
     # ==========================================================
     # ==========================================================
@@ -1814,7 +1829,6 @@ class EFLApp:
 
                 self.update_all_counts()
                 self.update_edit_mode()
-                self.root.update_idletasks()
                 self.root.focus_force()
             except ValueError:
                 pass
@@ -1995,7 +2009,6 @@ class EFLApp:
                 pass
 
         self.is_edit_mode_enabled = is_today
-        self.root.update_idletasks()
 
     def update_all_counts(self):
         """Update count labels for all tasks asynchronously to keep UI responsive"""
@@ -2517,7 +2530,10 @@ class EFLApp:
             "INFO": ("#1e293b", "#94a3b8")
         }
 
-        for item in reversed(filtered):
+        # Cap rendered log items to the most recent 25 to prevent GUI freeze/widget churn
+        display_items = filtered[-25:]
+
+        for item in reversed(display_items):
             row = ctk.CTkFrame(self.inline_log_scroll_frame, fg_color="transparent")
             row.pack(fill=ctk.X, pady=2, padx=4)
 
@@ -2552,9 +2568,14 @@ class EFLApp:
             msg_label.pack(side=ctk.LEFT, fill=ctk.X, expand=True)
 
     def _on_activity_log_added(self, entry):
-        self._refresh_inline_activity_log()
-        if hasattr(self, 'activity_log_window') and self.activity_log_window is not None and self.activity_log_window.winfo_exists():
-            self._refresh_activity_log_view()
+        if getattr(self, '_log_refresh_timer', None) is not None:
+            return
+        def _do_refresh():
+            self._log_refresh_timer = None
+            self._refresh_inline_activity_log()
+            if hasattr(self, 'activity_log_window') and self.activity_log_window is not None and self.activity_log_window.winfo_exists():
+                self._refresh_activity_log_view()
+        self._log_refresh_timer = self.root.after(200, _do_refresh)
 
     def _copy_activity_log(self):
         with _activity_log_lock:

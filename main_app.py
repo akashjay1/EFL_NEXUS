@@ -407,8 +407,7 @@ class MainApp:
         threading.Thread(target=self._load_assets_async, daemon=True).start()
         self.root.after(100, self._start_background_warmup)
 
-        # Pre-instantiate Tool 4 in idle time (pushed back to avoid early stutter)
-        self.root.after(1500, self._prewarm_tool4)
+        # Tool 4 loads lazily on first click — module is pre-imported by warmup thread
 
         # Silent update check 3 seconds after startup
         self.root.after(3000, lambda: self.check_for_updates(silent=True))
@@ -618,22 +617,17 @@ class MainApp:
     # Background Module Warmup
     # ------------------------------------------------------------------
     def _start_background_warmup(self):
-        """Import all heavy tool modules in parallel daemon threads so warmup
-        is concurrent instead of sequential. Also runs the Excel sort and
-        remote record sync in the background, never on the main thread."""
+        """Import heavy tool modules sequentially in a dedicated daemon thread
+        to prevent GIL and import-lock contention during startup. Then run the
+        Excel sort and remote record sync in the background, never on the main thread."""
 
-        def _import_module(mod):
-            try:
-                __import__(mod)
-            except Exception:
-                pass
+        def _warmup_worker():
+            for mod in ("requests", "outlook_email_gui", "efldatamanager", "reconciliation_tool"):
+                try:
+                    __import__(mod)
+                except Exception:
+                    pass
 
-        # Spawn one thread per module so they all load concurrently
-        for mod in ("requests", "korber_tool", "reconciliation_tool",
-                    "outlook_email_gui", "efldatamanager"):
-            threading.Thread(target=_import_module, args=(mod,), daemon=True).start()
-
-        def _post_import_tasks():
             # Pre-warm efldatamanager data
             try:
                 import efldatamanager
@@ -643,7 +637,7 @@ class MainApp:
                 pass
 
             # Sort local sent_log.xlsx and sync remote counts — both I/O-bound,
-            # safe to run in a daemon thread (was previously blocking __init__).
+            # safe to run in a daemon thread.
             try:
                 import outlook_email_gui
                 if hasattr(outlook_email_gui, 'SentLogStore'):
@@ -653,7 +647,7 @@ class MainApp:
             except Exception:
                 pass
 
-        threading.Thread(target=_post_import_tasks, daemon=True).start()
+        threading.Thread(target=_warmup_worker, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Update Checker Functions
@@ -1135,6 +1129,28 @@ class MainApp:
         self.active_page = key
         self._refresh_nav_highlight()
 
+        # Map of tool keys → whether they are already loaded
+        _tool_loaded = {
+            "tool1": self.tool1_ready or self.tool1_error is not None,
+            "tool2": self.tool2_app is not None or self.tool2_error is not None,
+            "tool3": self.tool3_app is not None or self.tool3_error is not None,
+            "tool4": self.tool4_app is not None or self.tool4_error is not None,
+        }
+
+        if key in _tool_loaded and not _tool_loaded[key]:
+            # Show loading overlay immediately, then build the tool asynchronously
+            self._show_loading_overlay(key)
+            self.pages[key].tkraise()
+            self.root.after(50, lambda k=key: self._deferred_tool_load(k))
+            return
+
+        # Already loaded or non-tool page — switch instantly
+        self.pages[key].tkraise()
+
+    # ------------------------------------------------------------------
+    # Deferred Tool Loader (runs behind the spinner overlay)
+    # ------------------------------------------------------------------
+    def _deferred_tool_load(self, key):
         if key == "tool1":
             self._ensure_tool1()
         elif key == "tool2":
@@ -1143,8 +1159,110 @@ class MainApp:
             self._ensure_tool3()
         elif key == "tool4":
             self._ensure_tool4()
+        self._hide_loading_overlay()
 
-        self.pages[key].tkraise()
+    # ------------------------------------------------------------------
+    # Fade-Arc Loading Spinner Overlay
+    # ------------------------------------------------------------------
+    _TOOL_DISPLAY_NAMES = {
+        "tool1": "Korber Automation",
+        "tool2": "Load Reconciliation",
+        "tool3": "Outlook Email Sender",
+        "tool4": "User Data Manager",
+    }
+
+    def _show_loading_overlay(self, key):
+        """Show a full-page overlay with an animated fade-arc spinner."""
+        page = self.pages[key]
+
+        # Overlay frame that fills the entire page
+        overlay = tk.Frame(page, bg=BASE_BG)
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        overlay.lift()
+
+        # Center wrapper
+        center = tk.Frame(overlay, bg=BASE_BG)
+        center.place(relx=0.5, rely=0.42, anchor="center")
+
+        # Spinner canvas
+        spinner_size = 52
+        canvas = tk.Canvas(
+            center, width=spinner_size, height=spinner_size,
+            bg=BASE_BG, highlightthickness=0
+        )
+        canvas.pack()
+
+        # Tool name label
+        tool_name = self._TOOL_DISPLAY_NAMES.get(key, "Module")
+        tk.Label(
+            center, text=f"Loading {tool_name}...",
+            bg=BASE_BG, fg="#334155",
+            font=("Segoe UI", 12, "bold")
+        ).pack(pady=(16, 4))
+
+        tk.Label(
+            center, text="Initializing components",
+            bg=BASE_BG, fg="#94a3b8",
+            font=("Segoe UI", 9)
+        ).pack()
+
+        # Store state for animation
+        self._loading_overlay = overlay
+        self._spinner_canvas = canvas
+        self._spinner_size = spinner_size
+        self._spinner_angle = 0
+        self._spinner_running = True
+        self._animate_fade_arc()
+
+    def _animate_fade_arc(self):
+        """Draw one frame of the fade-arc spinner and schedule the next."""
+        if not self._spinner_running:
+            return
+        canvas = self._spinner_canvas
+        if not canvas or not canvas.winfo_exists():
+            return
+
+        canvas.delete("all")
+        size = self._spinner_size
+        cx = cy = size / 2
+        r = size / 2 - 5
+        segments = 12
+        seg_angle = 360 / segments
+        line_width = 4
+
+        for i in range(segments):
+            start = self._spinner_angle + i * seg_angle
+            # Segment 0 is darkest, fading to near-invisible
+            alpha = max(0.06, 1.0 - (i / segments) * 0.92)
+            color = self._blend_hex(SIDEBAR_BG_ACTIVE, BASE_BG, alpha)
+            canvas.create_arc(
+                cx - r, cy - r, cx + r, cy + r,
+                start=start, extent=seg_angle - 4,
+                outline=color, width=line_width, style="arc"
+            )
+
+        self._spinner_angle = (self._spinner_angle - 30) % 360
+        canvas.after(75, self._animate_fade_arc)
+
+    @staticmethod
+    def _blend_hex(fg, bg, alpha):
+        """Blend fg color into bg at given alpha (0-1) to simulate opacity."""
+        r1, g1, b1 = int(fg[1:3], 16), int(fg[3:5], 16), int(fg[5:7], 16)
+        r2, g2, b2 = int(bg[1:3], 16), int(bg[3:5], 16), int(bg[5:7], 16)
+        r = int(r1 * alpha + r2 * (1 - alpha))
+        g = int(g1 * alpha + g2 * (1 - alpha))
+        b = int(b1 * alpha + b2 * (1 - alpha))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    def _hide_loading_overlay(self):
+        """Destroy the spinner overlay once the tool is fully loaded."""
+        self._spinner_running = False
+        if hasattr(self, '_loading_overlay') and self._loading_overlay:
+            try:
+                self._loading_overlay.destroy()
+            except Exception:
+                pass
+            self._loading_overlay = None
 
     # ------------------------------------------------------------------
     # Dashboard Page with Aurora Canvas & Frosted Cards
@@ -1161,7 +1279,7 @@ class MainApp:
                 return
             if self._resize_timer is not None:
                 self.root.after_cancel(self._resize_timer)
-            self._resize_timer = self.root.after(30, lambda: self._update_aurora_bg(w, h))
+            self._resize_timer = self.root.after(150, lambda: self._update_aurora_bg(w, h))
 
         self.dash_canvas.bind("<Configure>", on_canvas_resize)
 
@@ -1179,7 +1297,12 @@ class MainApp:
         self._build_dashboard_content(self.dash_overlay)
 
     def _update_aurora_bg(self, w, h):
+        if getattr(self, '_last_bg_size', None) == (w, h):
+            return
         try:
+            if not self.aurora_base_image:
+                return
+            self._last_bg_size = (w, h)
             resized = self.aurora_base_image.resize((w, h), Image.Resampling.BILINEAR)
             self.bg_photo = ImageTk.PhotoImage(resized)
             self.dash_canvas.delete("aurora_bg")
@@ -1471,12 +1594,8 @@ class MainApp:
             self._show_tool_error(page, "Tool 3: Outlook Email Sender", self.tool3_error)
 
     def _prewarm_tool4(self):
-        """Pre-instantiate Tool 4 during main launcher idle time to eliminate click lag and stutter."""
-        if self.tool4_app is None and self.tool4_error is None:
-            try:
-                self._ensure_tool4()
-            except Exception:
-                pass
+        """Stub kept for compatibility — Tool 4 now loads lazily on first click."""
+        pass
 
     def _ensure_tool4(self):
         page = self.pages["tool4"]

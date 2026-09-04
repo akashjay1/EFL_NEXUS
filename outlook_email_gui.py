@@ -717,7 +717,7 @@ class OutlookClient:
         return f"<html><body>{message_html}</body></html>"
 
     def preview(self, mail):
-        mail.Display(True)
+        mail.Display(False)
 
     def send(self, mail):
         mail.Send()
@@ -1649,14 +1649,31 @@ class OutlookEmailApp:
         to_addr, cc_addr, subject, body = self._gather_fields()
         if not self._validate(to_addr, subject):
             return
-        try:
-            mail = self.outlook.build_mail(
-                to_addr, cc_addr, subject, body, self.attachment_paths,
-                include_signature=self.include_signature_var.get())
-            self.outlook.preview(mail)
-        except Exception as exc:
-            messagebox.showerror("Outlook error",
-                                  f"Could not open the preview in Outlook:\n\n{exc}")
+
+        include_sig = self.include_signature_var.get()
+        attachments = list(self.attachment_paths)
+
+        def _do_preview():
+            try:
+                if WIN32COM_AVAILABLE:
+                    pythoncom.CoInitialize()
+                mail = self.outlook.build_mail(
+                    to_addr, cc_addr, subject, body, attachments,
+                    include_signature=include_sig)
+                self.outlook.preview(mail)
+            except Exception as exc:
+                err_text = str(exc)
+                self.root.after(0, lambda e=err_text: messagebox.showerror(
+                    "Outlook error",
+                    f"Could not open the preview in Outlook:\n\n{e}"))
+            finally:
+                if WIN32COM_AVAILABLE:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_do_preview, daemon=True).start()
 
     def _start_queue_worker(self):
         """Start the single persistent send-queue worker if not already running."""
