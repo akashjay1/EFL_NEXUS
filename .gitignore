@@ -13,3 +13,10 @@ efl_users.json
 !/tests/
 .vscode/
 __pycache__/
+
+# AuditShip's deployable standalone application.
+!/Korber_AuditShip/
+/Korber_AuditShip/*
+!/Korber_AuditShip/KORBER AuditShip.exe
+!/Korber_AuditShip/_internal/
+!/Korber_AuditShip/_internal/**
