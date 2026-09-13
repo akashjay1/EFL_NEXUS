@@ -1,5 +1,6 @@
 # Exclude credentials
 credentials.json
+efl_users.json
 
 # Cache and temporary files
 .efl_records_cache.json
@@ -9,5 +10,6 @@ credentials.json
 # Exclude all folders except assets
 /*/
 !/assets/
+!/tests/
 .vscode/
 __pycache__/

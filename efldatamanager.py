@@ -9,6 +9,7 @@ import json
 import hashlib
 from datetime import datetime
 import customtkinter as ctk
+from reconciliation_queue import enqueue_job, is_reconciliation_task
 
 # Make the app sharp and clear on high-DPI Windows monitors
 try:
@@ -846,6 +847,15 @@ def save_to_sheet(task, job_id, job_status, user_id):
             _count_cache.clear()
         else:
             invalidate_cache("sheet1")
+        if is_reconciliation_task(task):
+            try:
+                enqueue_job(job_id, task, user_id)
+                add_activity_log("TASK", f"Queued reconciliation job: {job_id}", "SUCCESS")
+            except Exception as queue_error:
+                add_activity_log(
+                    "TASK", f"Could not queue reconciliation job: {job_id}",
+                    "ERROR", str(queue_error)
+                )
         add_activity_log("TASK", f"Submitted '{task.rstrip(':')}' | Job: {job_id} | Status: {job_status} ({user_id})", "SUCCESS")
         return True, "Saved successfully!", None
     except Exception as e:

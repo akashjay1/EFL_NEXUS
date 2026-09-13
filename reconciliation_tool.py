@@ -14,6 +14,13 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import re
 from PIL import Image, ImageDraw, ImageFont, ImageTk
+from reconciliation_queue import (
+    choose_pending_job,
+    clear_queue,
+    complete_job,
+    get_reconciliation_output_folder,
+    list_pending_jobs,
+)
 
 warnings.filterwarnings('ignore')
 
@@ -1809,6 +1816,7 @@ class ReconciliationApp:
         # Variables
         self.history_file_path = tk.StringVar()
         self.plan_file_path = tk.StringVar()
+        self.queued_job_id = tk.StringVar(value="")
         self.output_folder = tk.StringVar(value=os.path.join(os.path.expanduser("~"), "Desktop"))
         self.archive_folder = tk.StringVar(value="C:\\Reconciliation\\Archive")
         self.progress_var = tk.DoubleVar()
@@ -1880,6 +1888,7 @@ class ReconciliationApp:
         
         # Create UI
         self.create_widgets()
+        self.refresh_job_queue()
         
         # Apply the saved (or default) theme now that all widgets exist
         self.apply_theme()
@@ -2153,6 +2162,44 @@ class ReconciliationApp:
         main_frame.columnconfigure(1, weight=1)
         main_frame.rowconfigure(0, weight=1)
         
+        # ===== QUEUED JOB SELECTION =====
+        queue_frame = ttk.LabelFrame(left_column, text="Queued Reconciliation Jobs", padding="15")
+        queue_frame.pack(fill=tk.X, pady=(0, 15))
+
+        queue_row = ttk.Frame(queue_frame)
+        queue_row.pack(fill=tk.X)
+        ttk.Label(queue_row, text="Job ID:", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT, padx=(0, 10))
+        self.queue_combo = ttk.Combobox(
+            queue_row,
+            textvariable=self.queued_job_id,
+            state="readonly"
+        )
+        self.queue_combo.pack(side=tk.LEFT, padx=(0, 10), fill=tk.X, expand=True)
+        self.queue_combo.bind("<<ComboboxSelected>>", self.on_queued_job_selected)
+        queue_actions = ttk.Frame(queue_row)
+        queue_actions.pack(side=tk.LEFT)
+        ttk.Button(queue_actions, text="Refresh", command=self.refresh_job_queue, width=9).pack(fill=tk.X)
+        tk.Button(
+            queue_actions,
+            text="Clear Queue",
+            command=self.clear_job_queue,
+            width=9,
+            bg="#dc2626",
+            fg="#ffffff",
+            activebackground="#b91c1c",
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            bd=0,
+            font=('Segoe UI', 8, 'bold'),
+            cursor="hand2"
+        ).pack(fill=tk.X, pady=(4, 0))
+
+        ttk.Label(
+            queue_frame,
+            text="Optional: select a queued Job ID to save the report in its own folder.",
+            font=('Segoe UI', 8), foreground='gray'
+        ).pack(anchor=tk.W, pady=(5, 0))
+
         # ===== FILE SELECTION FRAME =====
         file_frame = ttk.LabelFrame(left_column, text="📁 Select Files", padding="15")
         file_frame.pack(fill=tk.X, pady=(0, 15))
@@ -3297,6 +3344,47 @@ class ReconciliationApp:
         self.add_log(f"✅ Concatenation applied: '{new_column_name}' placed at the top/beginning", "SUCCESS")
         return df_copy
     
+    def refresh_job_queue(self):
+        """Reload the durable local reconciliation queue into the selector."""
+        try:
+            current_job = self.queued_job_id.get().strip()
+            pending_jobs = list_pending_jobs()
+            job_ids = [entry["job_id"] for entry in pending_jobs]
+            self.queue_combo['values'] = job_ids
+            selected_job = choose_pending_job(pending_jobs, current_job)
+            self.queued_job_id.set(selected_job)
+            self.add_log(f"Queued jobs refreshed: {len(job_ids)} pending", "INFO")
+            if selected_job and selected_job.casefold() != current_job.casefold():
+                self.add_log(f"Automatically selected next queued Job ID: {selected_job}", "INFO")
+        except Exception as error:
+            self.add_log(f"Could not refresh queued jobs: {error}", "WARNING")
+
+    def on_queued_job_selected(self, _event=None):
+        job_id = self.queued_job_id.get().strip()
+        if job_id:
+            self.add_log(f"Selected queued Job ID: {job_id}", "INFO")
+
+    def clear_job_queue(self):
+        pending_count = len(list_pending_jobs())
+        if pending_count == 0:
+            messagebox.showinfo("Queue Empty", "There are no queued jobs to clear.")
+            return
+        confirmed = messagebox.askyesno(
+            "Clear Reconciliation Queue",
+            f"Remove all {pending_count} pending job(s) from the queue?\n\nThis cannot be undone."
+        )
+        if not confirmed:
+            return
+        removed_count = clear_queue()
+        self.queued_job_id.set("")
+        self.refresh_job_queue()
+        self.add_log(f"Cleared {removed_count} queued job(s)", "WARNING")
+
+    def _finish_queued_job(self, job_id):
+        if self.queued_job_id.get().strip().casefold() == job_id.casefold():
+            self.queued_job_id.set("")
+        self.refresh_job_queue()
+
     def browse_history_file(self):
         file_path = filedialog.askopenfilename(
             title="Select Loading History File",
@@ -3401,6 +3489,7 @@ class ReconciliationApp:
             self.add_log(f"📁 Archive folder set to: {folder_path}", "INFO")
     
     def clear_all(self):
+        self.queued_job_id.set("")
         self.history_file_path.set("")
         self.plan_file_path.set("")
         self.history_file_info.set("No file selected")
@@ -3596,9 +3685,11 @@ class ReconciliationApp:
             
             wb.save(filepath)
             self.add_log("✅ Excel formatting applied successfully", "SUCCESS")
+            return True
             
         except Exception as e:
             self.add_log(f"⚠️ Formatting warning: {e}", "WARNING")
+            return False
     
     def run_reconciliation(self):
         # Validate files
@@ -3685,6 +3776,7 @@ class ReconciliationApp:
     
     def process_reconciliation(self):
         try:
+            selected_job_id = self.queued_job_id.get().strip()
             history_path = self.history_file_path.get()
             plan_path = self.plan_file_path.get()
             
@@ -3939,6 +4031,8 @@ class ReconciliationApp:
             self.update_progress(70, "💾 Saving results...")
             
             output_path = self.output_folder.get()
+            if selected_job_id:
+                output_path = str(get_reconciliation_output_folder(output_path, selected_job_id))
             if not os.path.exists(output_path):
                 os.makedirs(output_path)
                 self.add_log(f"📁 Created output folder: {output_path}", "INFO")
@@ -4007,7 +4101,12 @@ class ReconciliationApp:
             self.last_output_file = output_file
             
             self.update_progress(85, "🎨 Applying formatting...")
-            self.apply_excel_formatting(output_file)
+            formatting_succeeded = self.apply_excel_formatting(output_file)
+
+            if selected_job_id and formatting_succeeded:
+                if complete_job(selected_job_id):
+                    self.add_log(f"Completed queued Job ID: {selected_job_id}", "SUCCESS")
+                self.root.after(0, lambda job_id=selected_job_id: self._finish_queued_job(job_id))
             
             self.update_progress(95, "📂 Archiving files...")
             

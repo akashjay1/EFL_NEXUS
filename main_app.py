@@ -6,7 +6,7 @@ RUN:
     python main_app.py
 
 Requires korber_tool.py, reconciliation_tool.py, outlook_email_gui.py,
-Pillow, and numpy.
+the bundled Korber_AuditShip application, Pillow, and numpy.
 """
 
 import os
@@ -76,8 +76,11 @@ NAV_ITEMS = [
     ("tool2", "⚡", "Load Reconciliation"),
     ("tool3", "📧", "Outlook Email Sender"),
     ("tool4", "👥", "User Data Manager"),
+    ("tool5", "🚚", "Korber AuditShip"),
     ("settings", "⚙", "Settings"),
 ]
+
+AUDITSHIP_RELATIVE_PATH = os.path.join("Korber_AuditShip", "KORBER AuditShip.exe")
 
 
 def get_resource_path(relative_path):
@@ -381,10 +384,18 @@ class MainApp:
         self.tool2_app = None
         self.tool3_app = None
         self.tool4_app = None
+        self.tool5_process = None
+        self.tool5_ready = False
+        self.tool5_launch_button = None
+        self.tool5_host_frame = None
+        self.tool5_overlay = None
+        self.tool5_hwnd = None
+        self.tool5_watchdog_running = False
         self.tool1_error = None
         self.tool2_error = None
         self.tool3_error = None
         self.tool4_error = None
+        self.tool5_error = None
 
         self.sidebar_collapsed = False
         self.active_page = None
@@ -1129,12 +1140,18 @@ class MainApp:
         self.active_page = key
         self._refresh_nav_highlight()
 
+        # A foreign child HWND needs an explicit hide when another stacked Tk
+        # page is selected; Tk's tkraise alone cannot manage its visibility.
+        if key != "tool5":
+            self._set_tool5_window_visibility(False)
+
         # Map of tool keys → whether they are already loaded
         _tool_loaded = {
             "tool1": self.tool1_ready or self.tool1_error is not None,
             "tool2": self.tool2_app is not None or self.tool2_error is not None,
             "tool3": self.tool3_app is not None or self.tool3_error is not None,
             "tool4": self.tool4_app is not None or self.tool4_error is not None,
+            "tool5": self.tool5_ready or self.tool5_error is not None,
         }
 
         if key in _tool_loaded and not _tool_loaded[key]:
@@ -1145,7 +1162,14 @@ class MainApp:
             return
 
         # Already loaded or non-tool page — switch instantly
+        if key == "tool2" and self.tool2_app is not None:
+            try:
+                self.tool2_app.refresh_job_queue()
+            except Exception:
+                pass
         self.pages[key].tkraise()
+        if key == "tool5":
+            self._set_tool5_window_visibility(True)
 
     # ------------------------------------------------------------------
     # Deferred Tool Loader (runs behind the spinner overlay)
@@ -1159,6 +1183,8 @@ class MainApp:
             self._ensure_tool3()
         elif key == "tool4":
             self._ensure_tool4()
+        elif key == "tool5":
+            self._ensure_tool5()
         self._hide_loading_overlay()
 
     # ------------------------------------------------------------------
@@ -1169,6 +1195,7 @@ class MainApp:
         "tool2": "Load Reconciliation",
         "tool3": "Outlook Email Sender",
         "tool4": "User Data Manager",
+        "tool5": "Korber AuditShip",
     }
 
     def _show_loading_overlay(self, key):
@@ -1383,6 +1410,19 @@ class MainApp:
             title="User Data Manager",
             desc="Operator task logging, job record management, Google Sheets live sync, and daily KPI tracking.",
             page_key="tool4",
+            side_pad=(0, 12)
+        ).pack(side="left", fill="both", expand=True)
+
+        # Card 5: Korber AuditShip
+        self._make_aurora_card(
+            parent=cards_row,
+            icon="🚚",
+            badge="LOAD AUDIT & SHIP",
+            badge_color="#f59e0b",
+            accent_color="#f59e0b",
+            title="Korber AuditShip",
+            desc="Audit outbound loads and complete shipping workflows through the Korber One Mobile portal.",
+            page_key="tool5",
             side_pad=(0, 0)
         ).pack(side="left", fill="both", expand=True)
 
@@ -1508,7 +1548,7 @@ class MainApp:
         return chip
 
     # ------------------------------------------------------------------
-    # Tool 1 / Tool 2 / Tool 3 Lazy Loading
+    # Tool Lazy Loading
     # ------------------------------------------------------------------
     def _ensure_tool1(self):
         page = self.pages["tool1"]
@@ -1617,6 +1657,615 @@ class MainApp:
             self.tool4_error = traceback.format_exc()
             self.tool4_app = None
             self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
+
+    def _ensure_tool5(self):
+        """Create a borderless, full-page native host for AuditShip."""
+        if self.tool5_ready or self.tool5_error is not None:
+            return
+
+        page = self.pages["tool5"]
+        try:
+            page.configure(bg="#F3F6FA")
+
+            self.tool5_host_frame = tk.Frame(page, bg="#F3F6FA", highlightthickness=0)
+            self.tool5_host_frame.pack(fill="both", expand=True)
+            self.tool5_host_frame.bind("<Configure>", self._resize_tool5_window)
+            self._show_tool5_loading()
+
+            self.tool5_ready = True
+            self.root.after(100, self._launch_tool5)
+        except Exception:
+            self.tool5_error = traceback.format_exc()
+            self.tool5_ready = False
+            self._show_tool_error(page, "Tool 5: Korber AuditShip", self.tool5_error)
+
+    def _auditship_executable(self):
+        if getattr(sys, "frozen", False):
+            installed_exe = Path(sys.executable).parent / AUDITSHIP_RELATIVE_PATH
+            if installed_exe.is_file():
+                return installed_exe
+        return Path(get_resource_path(AUDITSHIP_RELATIVE_PATH))
+
+    def _launch_tool5(self):
+        """Launch AuditShip hidden and attach it to the Tool 5 host."""
+        if self.tool5_process is not None and self.tool5_process.poll() is None:
+            self._focus_tool5_window()
+            return
+
+        exe_path = self._auditship_executable()
+        if not exe_path.is_file():
+            self._show_tool5_error(
+                "Korber AuditShip is unavailable",
+                "The bundled AuditShip executable was not found. Rebuild or reinstall "
+                "EFL NEXUS with the Korber_AuditShip folder included."
+            )
+            return
+
+        try:
+            if sys.platform != "win32":
+                raise RuntimeError("Embedded AuditShip hosting is supported on Windows only.")
+
+            self.tool5_hwnd = None
+            self._show_tool5_loading()
+            child_env = os.environ.copy()
+            # AuditShip is a separate PyInstaller application. This prevents it
+            # from inheriting EFL NEXUS's frozen-runtime state.
+            child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            startup_info = subprocess.STARTUPINFO()
+            startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup_info.wShowWindow = 0  # SW_HIDE until attached to the host
+            self.tool5_process = subprocess.Popen(
+                [str(exe_path)], cwd=str(exe_path.parent), env=child_env,
+                startupinfo=startup_info
+            )
+            process = self.tool5_process
+            # Delay the first poll past AuditShip's built-in
+            # `app.after(100, open_app_maximized)` → state('zoomed') callback
+            # so we embed a window that has already settled into its maximized
+            # state rather than racing against it.
+            self.root.after(350, lambda p=process: self._poll_tool5_window(p, 0))
+            self._poll_tool5_process(process)
+        except Exception as exc:
+            self.tool5_process = None
+            self._show_tool5_error(
+                "AuditShip could not start",
+                f"EFL NEXUS could not embed AuditShip. {exc}"
+            )
+
+    @staticmethod
+    def _find_window_for_process(process_id):
+        """Return the largest unowned top-level HWND for a PID."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.EnumWindows.argtypes = [
+            ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
+            wintypes.LPARAM,
+        ]
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+
+        candidates = []
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        @callback_type
+        def collect_window(hwnd, _lparam):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value != process_id:
+                return True
+            if user32.GetWindow(hwnd, 4):  # GW_OWNER
+                return True
+            rect = wintypes.RECT()
+            if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                area = max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
+                candidates.append((area, int(hwnd)))
+            return True
+
+        user32.EnumWindows(collect_window, 0)
+        return max(candidates, default=(0, None))[1]
+
+    def _poll_tool5_window(self, process, attempts=0):
+        if process is not self.tool5_process:
+            return
+        if process.poll() is not None:
+            return
+
+        hwnd = self._find_window_for_process(process.pid)
+        if hwnd:
+            # Tkinter ignores STARTF_USESHOWWINDOW/SW_HIDE because it calls
+            # wm_deiconify() during its own startup. Re-hide immediately the
+            # moment we find the HWND so it never appears as a separate window.
+            try:
+                import ctypes
+                from ctypes import wintypes
+                _u32 = ctypes.WinDLL("user32", use_last_error=True)
+                _u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+                _u32.ShowWindow.restype = wintypes.BOOL
+                _u32.ShowWindow(hwnd, 0)  # SW_HIDE
+            except Exception:
+                pass
+            try:
+                self._embed_tool5_window(hwnd)
+                return
+            except Exception as exc:
+                self._fail_tool5_embedding(process, str(exc))
+                return
+
+        if attempts >= 200:  # 20 seconds
+            self._fail_tool5_embedding(
+                process, "The AuditShip window did not become available within 20 seconds."
+            )
+            return
+
+        self.root.after(
+            100, lambda p=process, n=attempts + 1: self._poll_tool5_window(p, n)
+        )
+
+    def _embed_tool5_window(self, hwnd):
+        import ctypes
+        from ctypes import wintypes
+
+        host = self.tool5_host_frame
+        if host is None or not host.winfo_exists():
+            raise RuntimeError("The AuditShip host frame is unavailable.")
+        host.update_idletasks()
+        host_hwnd = int(host.winfo_id())
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        # Belt-and-suspenders: ensure the window is hidden before any style or
+        # parent changes so it never flashes as a separate top-level window.
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+        user32.SetParent.restype = wintypes.HWND
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+
+        # Apply the child style before SetParent as well. Some CustomTkinter
+        # top-level windows reject cross-process parenting while still popup
+        # windows, then reassert it after parenting and after startup.
+        self._apply_tool5_window_chrome(hwnd)
+        ctypes.set_last_error(0)
+        user32.SetParent(hwnd, host_hwnd)
+        set_parent_error = ctypes.get_last_error()
+        actual_parent = int(user32.GetParent(hwnd) or 0)
+        if actual_parent != host_hwnd:
+            raise OSError(
+                set_parent_error,
+                "Windows could not attach the AuditShip window "
+                f"(window={hwnd}, host={host_hwnd}, actual_parent={actual_parent})",
+            )
+        self.tool5_hwnd = hwnd
+        self._apply_tool5_window_chrome(hwnd)
+        self._resize_tool5_window()
+        self._hide_tool5_overlay()
+        self._set_tool5_window_visibility(self.active_page == "tool5")
+        self._start_tool5_watchdog()
+
+        # AuditShip calls app.state("zoomed") shortly after startup. It can
+        # restore native chrome, so re-assert child styles after startup too.
+        # Gap 2: cover CustomTkinter state("zoomed") callbacks that fire up to ~3 s after startup.
+        for delay in (250, 700, 1400, 2500, 4000):
+            self.root.after(delay, lambda h=hwnd: self._refresh_tool5_chrome(h))
+
+    def _refresh_tool5_chrome(self, hwnd):
+        if hwnd != self.tool5_hwnd or self.tool5_process is None:
+            return
+        try:
+            self._apply_tool5_window_chrome(hwnd)
+            self._resize_tool5_window()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _tool5_user32():
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.GetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+        user32.SetWindowLongW.restype = ctypes.c_long
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        user32.GetParent.argtypes = [wintypes.HWND]
+        user32.GetParent.restype = wintypes.HWND
+        user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+        user32.SetParent.restype = wintypes.HWND
+        user32.IsWindow.argtypes = [wintypes.HWND]
+        user32.IsWindow.restype = wintypes.BOOL
+        user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        user32.GetWindowRect.restype = wintypes.BOOL
+        return user32
+
+    def _apply_tool5_window_chrome(self, hwnd):
+        """Remove top-level decorations from the native child window."""
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = self._tool5_user32()
+        user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        user32.ShowWindow.restype = wintypes.BOOL
+
+        GWL_STYLE = -16
+        GWL_EXSTYLE = -20
+        SW_RESTORE = 9
+        WS_CHILD = 0x40000000
+        WS_VISIBLE = 0x10000000
+        WS_POPUP = 0x80000000
+        WS_CAPTION = 0x00C00000
+        WS_THICKFRAME = 0x00040000
+        WS_SYSMENU = 0x00080000
+        WS_MINIMIZEBOX = 0x00020000
+        WS_MAXIMIZEBOX = 0x00010000
+        WS_MAXIMIZE = 0x01000000  # set by state('zoomed') — must clear before SetParent
+        WS_ICONIC = 0x20000000
+        WS_EX_DLGMODALFRAME = 0x00000001
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_WINDOWEDGE = 0x00000100
+        WS_EX_CLIENTEDGE = 0x00000200
+        WS_EX_STATICEDGE = 0x00020000
+        WS_EX_APPWINDOW = 0x00040000
+        WS_EX_NOACTIVATE = 0x08000000  # Gap 1: prevent child reasserting taskbar presence
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_FRAMECHANGED = 0x0020
+
+        # Un-maximize first so Windows doesn't fight our style change.
+        # SW_RESTORE has no effect if the window is already normal.
+        user32.ShowWindow(hwnd, SW_RESTORE)
+
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE) & 0xFFFFFFFF
+        style &= ~(
+            WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU |
+            WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_MAXIMIZE | WS_ICONIC
+        )
+        style |= WS_CHILD | WS_VISIBLE
+        user32.SetWindowLongW(hwnd, GWL_STYLE, ctypes.c_long(style).value)
+
+        exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+        exstyle &= ~(
+            WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW | WS_EX_WINDOWEDGE |
+            WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_APPWINDOW | WS_EX_NOACTIVATE
+        )
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ctypes.c_long(exstyle).value)
+        user32.SetWindowPos(
+            hwnd, 0, 0, 0, 0, 0,
+            SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+
+    def _start_tool5_watchdog(self):
+        if self.tool5_watchdog_running:
+            return
+        self.tool5_watchdog_running = True
+        self.root.after(100, self._maintain_tool5_embedding)
+        # SetWinEventHook fires the moment AuditShip calls ShowWindow from its
+        # own process, giving us sub-millisecond reaction time vs the 100ms poll.
+        self._install_tool5_show_hook()
+
+    def _install_tool5_show_hook(self):
+        """Watch for AuditShip's window becoming visible and immediately re-hide it."""
+        if getattr(self, '_tool5_hook_handle', None):
+            return  # already installed
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            # EVENT_OBJECT_SHOW (0x8002) fires when ShowWindow makes any object visible.
+            EVENT_OBJECT_SHOW = 0x8002
+            WINEVENT_OUTOFCONTEXT = 0x0000
+            WinEventProcType = ctypes.WINFUNCTYPE(
+                None,
+                wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
+                wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD,
+            )
+
+            def _on_show(hook, event, h, id_obj, id_child, thread, ts):
+                # Only care about AuditShip's top-level window escaping the embed.
+                if not h or h != self.tool5_hwnd:
+                    return
+                try:
+                    u32 = ctypes.WinDLL("user32", use_last_error=True)
+                    u32.GetParent.argtypes = [wintypes.HWND]
+                    u32.GetParent.restype = wintypes.HWND
+                    u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+                    u32.ShowWindow.restype = wintypes.BOOL
+                    host = self.tool5_host_frame
+                    if host is None or not host.winfo_exists():
+                        return
+                    host_hwnd = int(host.winfo_id())
+                    if int(u32.GetParent(h) or 0) != host_hwnd:
+                        # Window escaped the embed — hide immediately.
+                        u32.ShowWindow(h, 0)  # SW_HIDE
+                        # Re-embed from the Tk main loop (thread-safe).
+                        self.root.after_idle(lambda hh=h: self._force_reembed_tool5(hh))
+                except Exception:
+                    pass
+
+            proc = WinEventProcType(_on_show)
+            self._tool5_winevent_proc = proc  # keep reference so it isn't GC'd
+
+            u32 = ctypes.WinDLL("user32", use_last_error=True)
+            u32.SetWinEventHook.restype = wintypes.HANDLE
+            u32.SetWinEventHook.argtypes = [
+                wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE,
+                WinEventProcType, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+            ]
+            process = self.tool5_process
+            pid = process.pid if process else 0
+            handle = u32.SetWinEventHook(
+                EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW,
+                None, proc, pid, 0, WINEVENT_OUTOFCONTEXT,
+            )
+            self._tool5_hook_handle = int(handle) if handle else 0
+        except Exception:
+            self._tool5_hook_handle = 0
+
+    def _teardown_tool5_show_hook(self):
+        handle = getattr(self, '_tool5_hook_handle', 0)
+        if handle:
+            try:
+                import ctypes
+                from ctypes import wintypes
+                u32 = ctypes.WinDLL("user32", use_last_error=True)
+                u32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+                u32.UnhookWinEvent.restype = wintypes.BOOL
+                u32.UnhookWinEvent(handle)
+            except Exception:
+                pass
+        self._tool5_hook_handle = 0
+        self._tool5_winevent_proc = None
+
+    def _force_reembed_tool5(self, hwnd):
+        """Re-apply parent + chrome when the show-hook fires on an escaped window."""
+        if hwnd != self.tool5_hwnd or self.tool5_process is None:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            u32 = self._tool5_user32()
+            u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            u32.ShowWindow.restype = wintypes.BOOL
+            host = self.tool5_host_frame
+            if host is None or not host.winfo_exists():
+                return
+            host.update_idletasks()
+            host_hwnd = int(host.winfo_id())
+            u32.ShowWindow(hwnd, 0)  # SW_HIDE
+            self._apply_tool5_window_chrome(hwnd)
+            u32.SetParent(hwnd, host_hwnd)
+            self._resize_tool5_window()
+            if self.active_page == "tool5":
+                u32.ShowWindow(hwnd, 5)  # SW_SHOW
+        except Exception:
+            pass
+
+    def _maintain_tool5_embedding(self):
+        """Keep the compiled AuditShip UI attached despite its own WM updates."""
+        process = self.tool5_process
+        hwnd = self.tool5_hwnd
+        host = self.tool5_host_frame
+        if (
+            process is None or process.poll() is not None or not hwnd or host is None
+            or not host.winfo_exists()
+        ):
+            self.tool5_watchdog_running = False
+            return
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = self._tool5_user32()
+            if not user32.IsWindow(hwnd):
+                self.tool5_hwnd = None
+                self.tool5_watchdog_running = False
+                return
+
+            host.update_idletasks()
+            host_hwnd = int(host.winfo_id())
+            reparented = False
+            if int(user32.GetParent(hwnd) or 0) != host_hwnd:
+                # CustomTkinter can reapply top-level geometry after startup.
+                # Hide immediately so it doesn't flash as a separate window
+                # between watchdog cycles, then restore the parent relation.
+                user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+                user32.ShowWindow.restype = wintypes.BOOL
+                user32.ShowWindow(hwnd, 0)  # SW_HIDE before re-parenting
+                self._apply_tool5_window_chrome(hwnd)
+                user32.SetParent(hwnd, host_hwnd)
+                reparented = int(user32.GetParent(hwnd) or 0) == host_hwnd
+
+            GWL_STYLE = -16
+            GWL_EXSTYLE = -20
+            chrome_style = (
+                0x80000000 | 0x00C00000 | 0x00040000 | 0x00080000 |
+                0x00020000 | 0x00010000 | 0x01000000  # include WS_MAXIMIZE
+            )
+            # Gap 4: include WS_EX_NOACTIVATE (0x08000000) in the drift-detection mask.
+            chrome_exstyle = 0x00000001 | 0x00000080 | 0x00000100 | 0x00000200 | 0x00020000 | 0x00040000 | 0x08000000
+            style = user32.GetWindowLongW(hwnd, GWL_STYLE) & 0xFFFFFFFF
+            exstyle = user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+            if not (style & 0x40000000) or style & chrome_style or exstyle & chrome_exstyle:
+                self._apply_tool5_window_chrome(hwnd)
+
+            rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            bounds_changed = (
+                abs(rect.left - host.winfo_rootx()) > 2
+                or abs(rect.top - host.winfo_rooty()) > 2
+                or abs((rect.right - rect.left) - host.winfo_width()) > 2
+                or abs((rect.bottom - rect.top) - host.winfo_height()) > 2
+            )
+            if bounds_changed:
+                self._resize_tool5_window()
+            if reparented:
+                self._set_tool5_window_visibility(self.active_page == "tool5")
+        except Exception:
+            pass
+
+        if self.root.winfo_exists():
+            self.root.after(100, self._maintain_tool5_embedding)
+
+    def _resize_tool5_window(self, _event=None):
+        if not self.tool5_hwnd or not self.tool5_host_frame:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.MoveWindow.argtypes = [
+                wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, wintypes.BOOL,
+            ]
+            user32.MoveWindow.restype = wintypes.BOOL
+            width = max(1, self.tool5_host_frame.winfo_width())
+            height = max(1, self.tool5_host_frame.winfo_height())
+            user32.MoveWindow(self.tool5_hwnd, 0, 0, width, height, True)
+        except Exception:
+            pass
+
+    def _set_tool5_window_visibility(self, visible):
+        if not self.tool5_hwnd:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.IsWindow.restype = wintypes.BOOL
+            user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.ShowWindow.restype = wintypes.BOOL
+            if not user32.IsWindow(self.tool5_hwnd):
+                self.tool5_hwnd = None
+                return
+            user32.ShowWindow(self.tool5_hwnd, 5 if visible else 0)
+            if visible:
+                self.root.after_idle(lambda h=self.tool5_hwnd: self._refresh_tool5_chrome(h))
+        except Exception:
+            pass
+
+    def _focus_tool5_window(self):
+        if not self.tool5_hwnd:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            self._set_tool5_window_visibility(True)
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.SetFocus.argtypes = [wintypes.HWND]
+            user32.SetFocus.restype = wintypes.HWND
+            user32.SetFocus(self.tool5_hwnd)
+        except Exception:
+            pass
+
+    def _fail_tool5_embedding(self, process, reason):
+        self._teardown_tool5_show_hook()
+        if process is self.tool5_process and process.poll() is None:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+        if process is self.tool5_process:
+            self.tool5_process = None
+        self.tool5_hwnd = None
+        # Gap 3: reset ready flag so a subsequent retry re-triggers the full load path.
+        self.tool5_ready = False
+        self._show_tool5_error(
+            "AuditShip could not be embedded",
+            f"EFL NEXUS could not attach AuditShip. {reason}"
+        )
+
+    def _poll_tool5_process(self, process):
+        if process is not self.tool5_process:
+            return
+        if process.poll() is None:
+            if self.root.winfo_exists():
+                self.root.after(1000, lambda p=process: self._poll_tool5_process(p))
+            return
+
+        exit_code = process.returncode
+        self.tool5_process = None
+        self.tool5_hwnd = None
+        # Gap 3: reset ready flag so navigating back to Tool 5 re-triggers the load flow.
+        self.tool5_ready = False
+        self._teardown_tool5_show_hook()
+        detail = "AuditShip was closed." if exit_code == 0 else f"AuditShip stopped unexpectedly (exit code {exit_code})."
+        self._show_tool5_error("AuditShip is not running", detail)
+
+    def _show_tool5_loading(self):
+        self._destroy_tool5_overlay()
+        if self.tool5_host_frame is None or not self.tool5_host_frame.winfo_exists():
+            return
+        self.tool5_overlay = tk.Frame(self.tool5_host_frame, bg="#F3F6FA")
+        self.tool5_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        tk.Label(
+            self.tool5_overlay, text="Loading Korber AuditShip…", bg="#F3F6FA",
+            fg="#334155", font=("Segoe UI", 12, "bold")
+        ).place(relx=0.5, rely=0.46, anchor="center")
+        tk.Label(
+            self.tool5_overlay, text="Preparing the unified workspace", bg="#F3F6FA",
+            fg="#94a3b8", font=("Segoe UI", 9)
+        ).place(relx=0.5, rely=0.51, anchor="center")
+
+    def _show_tool5_error(self, title, detail):
+        self._destroy_tool5_overlay()
+        if self.tool5_host_frame is None or not self.tool5_host_frame.winfo_exists():
+            return
+        self.tool5_overlay = tk.Frame(self.tool5_host_frame, bg="#F3F6FA")
+        self.tool5_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        card = tk.Frame(
+            self.tool5_overlay, bg="#ffffff", highlightbackground="#fecaca",
+            highlightthickness=1, padx=28, pady=24
+        )
+        card.place(relx=0.5, rely=0.45, anchor="center")
+        tk.Label(card, text=title, bg="#ffffff", fg="#b91c1c", font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        tk.Label(
+            card, text=detail, bg="#ffffff", fg="#64748b", font=("Segoe UI", 9),
+            justify="left", wraplength=460
+        ).pack(anchor="w", pady=(8, 18))
+        self.tool5_launch_button = tk.Button(
+            card, text="Retry AuditShip", command=self._launch_tool5,
+            bg="#0d1b2a", fg="#ffffff", activebackground="#2563eb",
+            activeforeground="#ffffff", relief="flat", bd=0,
+            font=("Segoe UI", 9, "bold"), padx=16, pady=8, cursor="hand2"
+        )
+        self.tool5_launch_button.pack(anchor="w")
+
+    def _hide_tool5_overlay(self):
+        self._destroy_tool5_overlay()
+
+    def _destroy_tool5_overlay(self):
+        if self.tool5_overlay is not None:
+            try:
+                self.tool5_overlay.destroy()
+            except Exception:
+                pass
+        self.tool5_overlay = None
+        self.tool5_launch_button = None
 
     def _show_tool_error(self, page, tool_name, error_text):
         for w in page.winfo_children():
@@ -1951,7 +2600,8 @@ class MainApp:
         tk.Label(
             about_card,
             text="EFL NEXUS is an enterprise automation suite combining Korber Automation, "
-            "Load Reconciliation, and Outlook Email Dispatch into a single unified client.\n\n"
+            "Load Reconciliation, Outlook Email Dispatch, User Data Management, and "
+            "Korber AuditShip into a single unified client.\n\n"
             "For feedback, questions, or bug reports, please refer to the internal repository "
             "or contact the automation engineering team.",
             bg="#ffffff", fg="#334155", font=("Segoe UI", 9), wraplength=800, justify="left"
@@ -2079,6 +2729,21 @@ class MainApp:
             try:
                 self.tool4_app.close_popup_safely()
                 self.tool4_app.cancel_all_timers()
+            except Exception:
+                pass
+        if self.tool5_process is not None and self.tool5_process.poll() is None:
+            try:
+                if self.tool5_hwnd:
+                    import ctypes
+                    from ctypes import wintypes
+                    user32 = ctypes.WinDLL("user32", use_last_error=True)
+                    user32.PostMessageW.argtypes = [
+                        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+                    ]
+                    user32.PostMessageW.restype = wintypes.BOOL
+                    user32.PostMessageW(self.tool5_hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                else:
+                    self.tool5_process.terminate()
             except Exception:
                 pass
         self.root.destroy()
