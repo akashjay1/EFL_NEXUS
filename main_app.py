@@ -14,6 +14,7 @@ import sys
 import json
 import shutil
 import glob
+import re
 import socket
 import threading
 import subprocess
@@ -40,6 +41,11 @@ except Exception as _e:
 # ---------------------------------------------------------------------------
 GITHUB_USER = "akashjay1"
 GITHUB_REPO = "EFL_NEXUS"
+
+
+def normalize_version(value):
+    """Return the numeric version from a release tag or version.txt value."""
+    return re.sub(r"^(?:EFL_NEXUS_)?v(?=\d)", "", value.strip(), flags=re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Theme Colors & Palette ('Aurora Borealis' Nebula Theme)
@@ -675,7 +681,7 @@ class MainApp:
                 with open(app_dir_ver, "r", encoding="utf-8") as f:
                     ver = f.read().strip()
                     if ver:
-                        return ver
+                        return normalize_version(ver)
             except Exception:
                 pass
 
@@ -686,7 +692,7 @@ class MainApp:
                 with open(res_ver_path, "r", encoding="utf-8") as f:
                     ver = f.read().strip()
                     if ver:
-                        return ver
+                        return normalize_version(ver)
             except Exception:
                 pass
 
@@ -739,7 +745,7 @@ class MainApp:
             response.raise_for_status()
             data = response.json()
 
-            latest_version = data.get("tag_name", "").strip().lstrip("v")
+            latest_version = normalize_version(data.get("tag_name", ""))
 
             # ---------------------------------------------------------------
             # Pass 1 — collect assets, categorised by type:
@@ -1701,6 +1707,15 @@ class MainApp:
             )
             return
 
+        auditship_user = self.config_store.get_auditship_user() if self.config_store else ""
+        auditship_pass = self.config_store.get_auditship_pass() if self.config_store else ""
+        if not auditship_user or not auditship_pass:
+            self._show_tool5_error(
+                "AuditShip credentials missing",
+                "Enter and save your AuditShip username and password in Settings before opening this tool."
+            )
+            return
+
         try:
             if sys.platform != "win32":
                 raise RuntimeError("Embedded AuditShip hosting is supported on Windows only.")
@@ -1708,6 +1723,8 @@ class MainApp:
             self.tool5_hwnd = None
             self._show_tool5_loading()
             child_env = os.environ.copy()
+            child_env["AUDITSHIP_USER"] = auditship_user
+            child_env["AUDITSHIP_PASS"] = auditship_pass
             # AuditShip is a separate PyInstaller application. This prevents it
             # from inheriting EFL NEXUS's frozen-runtime state.
             child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
@@ -2455,6 +2472,76 @@ class MainApp:
         )
         self.korber_msg_lbl.pack(side="left", padx=(14, 0))
 
+        # --- AuditShip credentials (separate from Körber Cloud automation) ---
+        auditship_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
+        auditship_card.pack(fill="x", pady=(0, 20))
+
+        auditship_user = self.config_store.get_auditship_user() if self.config_store else ""
+        auditship_pass = self.config_store.get_auditship_pass() if self.config_store else ""
+        auditship_header = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_header.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            auditship_header, text="KORBER AUDITSHIP CREDENTIALS", bg="#ffffff", fg="#64748b",
+            font=("Segoe UI", 8, "bold")
+        ).pack(side="left")
+        self.auditship_status_pill = tk.Label(
+            auditship_header,
+            text="● Configured" if auditship_user and auditship_pass else "● Needs Setup",
+            bg="#0d1b2a", fg=AURORA_MINT if auditship_user and auditship_pass else "#f59e0b",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=2
+        )
+        self.auditship_status_pill.pack(side="right")
+        tk.Label(
+            auditship_card,
+            text="AuditShip uses these credentials the next time it starts. They are separate from Körber Cloud automation credentials.",
+            bg="#ffffff", fg="#64748b", font=("Segoe UI", 9),
+            wraplength=800, justify="left"
+        ).pack(anchor="w", pady=(0, 14))
+
+        auditship_fields = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_fields.pack(fill="x", pady=(0, 14))
+        auditship_fields.columnconfigure(1, weight=1)
+        tk.Label(
+            auditship_fields, text="User Name:", bg="#ffffff", fg="#0f172a",
+            font=("Segoe UI", 9, "bold"), width=16, anchor="w"
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.auditship_user_entry = ttk.Entry(auditship_fields, font=("Segoe UI", 9))
+        self.auditship_user_entry.insert(0, auditship_user)
+        self.auditship_user_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        tk.Label(
+            auditship_fields, text="Password:", bg="#ffffff", fg="#0f172a",
+            font=("Segoe UI", 9, "bold"), width=16, anchor="w"
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        auditship_password_row = tk.Frame(auditship_fields, bg="#ffffff")
+        auditship_password_row.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+        auditship_password_row.columnconfigure(0, weight=1)
+        self.auditship_pass_entry = ttk.Entry(auditship_password_row, font=("Segoe UI", 9), show="•")
+        self.auditship_pass_entry.insert(0, auditship_pass)
+        self.auditship_pass_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.auditship_pass_toggle_btn = tk.Label(
+            auditship_password_row, text="👁 Show", bg="#f1f5f9", fg="#334155",
+            font=("Segoe UI", 8, "bold"), padx=10, pady=4, cursor="hand2", bd=1, relief="solid"
+        )
+        self.auditship_pass_toggle_btn.grid(row=0, column=1)
+        self.auditship_pass_toggle_btn.bind("<Button-1>", lambda e: self._toggle_auditship_password_visibility())
+
+        auditship_button_row = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_button_row.pack(fill="x", pady=(8, 0))
+        save_auditship_btn = tk.Label(
+            auditship_button_row, text="💾  Save Credentials", bg="#0d1b2a", fg="#ffffff",
+            font=("Segoe UI", 9, "bold"), padx=16, pady=8, cursor="hand2"
+        )
+        save_auditship_btn.pack(side="left", padx=(0, 10))
+        save_auditship_btn.bind("<Button-1>", lambda e: self._save_auditship_settings())
+        save_auditship_btn.bind("<Enter>", lambda e: save_auditship_btn.config(bg=AURORA_CYAN, fg="#0b1420"))
+        save_auditship_btn.bind("<Leave>", lambda e: save_auditship_btn.config(bg="#0d1b2a", fg="#ffffff"))
+        self.auditship_msg_lbl = tk.Label(
+            auditship_button_row, text="", bg="#ffffff", fg=AURORA_MINT,
+            font=("Segoe UI", 9, "bold")
+        )
+        self.auditship_msg_lbl.pack(side="left", padx=(14, 0))
+
         # --- Google Sheets & Web App Integration Card ---
         gsheet_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         gsheet_card.pack(fill="x", pady=(0, 20))
@@ -2647,6 +2734,33 @@ class MainApp:
         if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists():
             self.korber_msg_lbl.config(text="✓ Credentials saved successfully!", fg=AURORA_MINT)
             self.root.after(3500, lambda: self.korber_msg_lbl.config(text="") if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists() else None)
+
+    def _toggle_auditship_password_visibility(self):
+        if self.auditship_pass_entry.cget("show"):
+            self.auditship_pass_entry.config(show="")
+            self.auditship_pass_toggle_btn.config(text="🔒 Hide")
+        else:
+            self.auditship_pass_entry.config(show="•")
+            self.auditship_pass_toggle_btn.config(text="👁 Show")
+
+    def _save_auditship_settings(self):
+        user = self.auditship_user_entry.get().strip()
+        password = self.auditship_pass_entry.get()
+        if not user or not password:
+            messagebox.showwarning("Incomplete Credentials", "Please enter both User Name and Password for Korber AuditShip.")
+            return
+        if not self.config_store or not self.config_store.save(auditship_user=user, auditship_pass=password):
+            messagebox.showerror("Save Failed", "AuditShip credentials could not be saved. Check access to config.json.")
+            return
+        self.auditship_status_pill.config(text="● Configured", fg=AURORA_MINT)
+        auditship_running = self.tool5_process is not None and self.tool5_process.poll() is None
+        message = "✓ Saved. Restart AuditShip to use these credentials." if auditship_running else "✓ Credentials saved successfully!"
+        self.auditship_msg_lbl.config(text=message, fg=AURORA_MINT)
+        self.root.after(
+            3500,
+            lambda: self.auditship_msg_lbl.config(text="")
+            if self.auditship_msg_lbl.winfo_exists() else None
+        )
 
     def _save_gsheet_settings(self):
         webapp_url = self.webapp_entry.get().strip()

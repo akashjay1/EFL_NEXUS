@@ -278,6 +278,8 @@ def compute_changed_files(new_dir: Path, prev_dir: Path) -> list:
 
     changed = []
     for rel, new_hash in new_index.items():
+        if rel.lower() in ("templates.xlsx", "variance_templates.xlsx"):
+            continue  # user-owned files must not be replaced by older updaters
         if rel == "build.txt":
             continue  # handled separately
         prev_hash = prev_index.get(rel)

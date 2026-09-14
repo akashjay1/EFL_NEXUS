@@ -17,6 +17,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import requests
 
+USER_TEMPLATE_FILES = {"templates.xlsx", "variance_templates.xlsx"}
+
 # ----------------------------------------------------------------------
 # Parse command line arguments
 # ----------------------------------------------------------------------
@@ -234,7 +236,7 @@ class UpdaterApp:
             time.sleep(2)
 
     def copy_new_files(self):
-        """Copy files from temp_dir to app_dir, overwriting existing.
+        """Copy update files while preserving existing user templates.
         Handles a zip with a single top-level folder instead of files at
         the zip root, and retries briefly on PermissionError."""
         if not os.path.exists(self.app_dir):
@@ -269,6 +271,9 @@ class UpdaterApp:
                 continue
             src = os.path.join(source_dir, item)
             dst = os.path.join(self.app_dir, item)
+            if item.lower() in USER_TEMPLATE_FILES and os.path.exists(dst):
+                self.log.info(f"Keeping existing user template file '{dst}'.")
+                continue
             if self_exe_name and item.lower() == self_exe_name.lower():
                 self._replace_self(src, dst)
             else:

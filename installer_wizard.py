@@ -613,6 +613,8 @@ class SetupWizard(tk.Tk):
                     prog = 15 + int(((i + 1) / total_items) * 65)
                     self._update_progress(prog, f"Extracting {item.name}...", f"Deploying {item.name} to destination...")
                     dst = install_dir / item.name
+                    if item.name.lower() in ("templates.xlsx", "variance_templates.xlsx") and dst.exists():
+                        continue
                     if item.is_dir():
                         shutil.copytree(item, dst, dirs_exist_ok=True)
                     else:
@@ -640,6 +642,9 @@ class SetupWizard(tk.Tk):
                     current_item += 1
                     prog = 10 + int((current_item / total_items) * 60)
                     self._update_progress(prog, f"Extracting {target_name}...", f"Copying to {install_dir / target_name}")
+
+                    if target_name in ("templates.xlsx", "variance_templates.xlsx") and (install_dir / target_name).exists():
+                        continue
 
                     copied = False
                     for src in candidates:

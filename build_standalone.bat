@@ -24,7 +24,15 @@ if not exist "version.txt" (
     pause
     exit /b 1
 )
+set "VER="
 for /f "usebackq tokens=* delims=" %%V in ("version.txt") do set VER=%%V
+if /i "!VER:~0,10!"=="EFL_NEXUS_" set "VER=!VER:~10!"
+if /i "!VER:~0,1!"=="v" set "VER=!VER:~1!"
+if not defined VER (
+    echo [ERROR] version.txt has no version number!
+    pause
+    exit /b 1
+)
 set BUILD=0
 if exist "build.txt" (
     for /f "usebackq tokens=* delims=" %%B in ("build.txt") do set BUILD=%%B
@@ -41,6 +49,13 @@ if not exist "Korber_AuditShip\_internal\python314.dll" (
     echo [ERROR] Korber_AuditShip runtime folder is incomplete!
     pause
     exit /b 1
+)
+
+%PY_CMD% patch_auditship_credentials.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Could not install the AuditShip credential bridge.
+    pause
+    exit /b %errorlevel%
 )
 
 echo [1/5] Building high-speed directory-mode EFL_NEXUS...
@@ -63,6 +78,7 @@ echo Deploying default templates, credentials and assets to dist\EFL_NEXUS...
 for %%F in (templates.xlsx variance_templates.xlsx sent_log.xlsx version.txt build.txt icon_2.ico icon.ico aurora_bg.png credentials.json efl_users.json) do (
     if exist "%%F" copy /y "%%F" "dist\EFL_NEXUS\" >nul
 )
+> "dist\EFL_NEXUS\version.txt" echo(!VER!
 if exist "dist\EFL_NEXUS\config.json" del /f /q "dist\EFL_NEXUS\config.json"
 
 :: Keep AuditShip's complete standalone distribution beside the main executable.
@@ -96,17 +112,26 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo [4/5] Creating GitHub Release ZIP package from directory build...
-%PY_CMD% -c "import zipfile, os, pathlib; ver = open('version.txt').read().strip(); zpath = f'dist/EFL_NEXUS_v{ver}.zip'; src_dir = pathlib.Path('dist/EFL_NEXUS'); z = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED); [z.write(f, f.relative_to(src_dir)) for f in src_dir.rglob('*') if f.is_file() and not f.name.endswith('.old')]; z.close(); print('Created release zip:', zpath, f'{os.path.getsize(zpath)/1024/1024:.2f} MB')"
-
-echo.
-echo [5/5] Generating initial patch ZIP (build %BUILD%)...
+echo [4/5] Generating initial patch ZIP (build %BUILD%)...
+:: Generate the patch before writing this build's full ZIP, so auto-find-prev
+:: compares against an earlier release instead of the ZIP we just created.
 %PY_CMD% create_patch.py --new-dir dist\EFL_NEXUS --auto-find-prev dist\ --version %VER% --build %BUILD% --output-dir dist
 if %errorlevel% equ 0 (
+    set "PATCH_CREATED=1"
     echo   [OK] Patch ZIP: dist\EFL_Nexus_Patch_v%VER%_b%BUILD%.zip
 ) else (
+    set "PATCH_CREATED=0"
     echo   [INFO] No patch generated (first release or no previous ZIP in dist\).
     echo         For a hotfix, run: create_patch.bat
+)
+
+echo.
+echo [5/5] Creating GitHub Release ZIP package from directory build...
+%PY_CMD% -c "import zipfile, os, pathlib; ver = os.environ['VER']; zpath = f'dist/EFL_NEXUS_v{ver}.zip'; src_dir = pathlib.Path('dist/EFL_NEXUS'); templates = {'templates.xlsx', 'variance_templates.xlsx'}; z = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED); [z.write(f, f.relative_to(src_dir)) for f in src_dir.rglob('*') if f.is_file() and not f.name.endswith('.old') and f.relative_to(src_dir).as_posix().lower() not in templates]; z.close(); print('Created release zip:', zpath, f'{os.path.getsize(zpath)/1024/1024:.2f} MB')"
+if %errorlevel% neq 0 (
+    echo [ERROR] Failed to create the full release ZIP.
+    pause
+    exit /b %errorlevel%
 )
 
 echo.
@@ -117,9 +142,13 @@ echo   Outputs in %~dp0dist\:
 echo     1. EFL_NEXUS\                               (Application directory)
 echo     2. EFL_NEXUS_Setup.exe                      (Full Install Wizard)
 echo     3. EFL_NEXUS_v%VER%.zip                     (Full Release ZIP - fallback)
-echo     4. EFL_Nexus_Patch_v%VER%_b%BUILD%.zip      (Initial patch - preferred by updater)
+if "%PATCH_CREATED%"=="1" echo     4. EFL_Nexus_Patch_v%VER%_b%BUILD%.zip      (Initial patch - preferred by updater)
 echo.
-echo   Upload ZIPs #3 and #4 to the GitHub Release tag v%VER%.
+if "%PATCH_CREATED%"=="1" (
+    echo   Upload ZIPs #3 and #4 to the GitHub Release tag EFL_NEXUS_v%VER%.
+) else (
+    echo   Upload ZIP #3 to the GitHub Release tag EFL_NEXUS_v%VER%.
+)
 echo.
 echo   --- To deploy a HOTFIX later (no rebuild needed) ---
 echo   1. Run create_patch.bat

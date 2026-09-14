@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+cd /d "%~dp0"
 echo ========================================================
 echo   EFL NEXUS - Fast Differential Patch Generator
 echo ========================================================
@@ -23,7 +24,15 @@ if not exist "version.txt" (
     pause
     exit /b 1
 )
+set "VER="
 for /f "usebackq tokens=* delims=" %%V in ("version.txt") do set VER=%%V
+if /i "!VER:~0,10!"=="EFL_NEXUS_" set "VER=!VER:~10!"
+if /i "!VER:~0,1!"=="v" set "VER=!VER:~1!"
+if not defined VER (
+    echo [ERROR] version.txt has no version number!
+    pause
+    exit /b 1
+)
 set BUILD=0
 if exist "build.txt" (
     for /f "usebackq tokens=* delims=" %%B in ("build.txt") do set BUILD=%%B
@@ -41,12 +50,19 @@ if not "%~1"=="" (
     if "!TARGET_BUILD!"=="" set TARGET_BUILD=!NEXT_BUILD!
 )
 
-echo !TARGET_BUILD!> "build.txt"
+> "build.txt" echo(!TARGET_BUILD!
 echo.
 echo ========================================================
 echo Building Patch for EFL_NEXUS v%VER% (Build !TARGET_BUILD!)
 echo ========================================================
 echo.
+
+%PY_CMD% patch_auditship_credentials.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Could not install the AuditShip credential bridge.
+    pause
+    exit /b %errorlevel%
+)
 
 :: Step 1: Compile directory build
 echo [1/3] Compiling directory-mode EFL_NEXUS with PyInstaller...
@@ -63,7 +79,15 @@ echo [2/3] Syncing latest assets and templates into dist\EFL_NEXUS...
 for %%F in (templates.xlsx variance_templates.xlsx sent_log.xlsx version.txt build.txt icon_2.ico icon.ico aurora_bg.png credentials.json efl_users.json) do (
     if exist "%%F" copy /y "%%F" "dist\EFL_NEXUS\" >nul
 )
+> "dist\EFL_NEXUS\version.txt" echo(!VER!
 if exist "dist\EFL_NEXUS\config.json" del /f /q "dist\EFL_NEXUS\config.json"
+
+robocopy "Korber_AuditShip" "dist\EFL_NEXUS\Korber_AuditShip" /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS
+if errorlevel 8 (
+    echo [ERROR] Failed to include Korber AuditShip in the patch build.
+    pause
+    exit /b 1
+)
 
 :: Step 3: Run differential patch generator
 echo.
@@ -77,7 +101,7 @@ if %errorlevel% equ 0 (
     echo   Output: dist\EFL_Nexus_Patch_v%VER%_b!TARGET_BUILD!.zip
     echo.
     echo   Deploy to GitHub:
-    echo   1. Open: https://github.com/akashjay1/EFL_NEXUS/releases/tag/v%VER%
+    echo   1. Open: https://github.com/akashjay1/EFL_NEXUS/releases/tag/EFL_NEXUS_v%VER%
     echo   2. Click "Edit release" and attach:
     echo      dist\EFL_Nexus_Patch_v%VER%_b!TARGET_BUILD!.zip
     echo   3. Save. Users will automatically receive the hotfix!
@@ -85,6 +109,8 @@ if %errorlevel% equ 0 (
 ) else (
     echo.
     echo [ERROR] Patch generation failed.
+    pause
+    exit /b 1
 )
 
 pause
