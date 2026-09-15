@@ -24,6 +24,7 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
+from kpi_profile import load_saved_profile, validate_profile
 
 # outlook_email_gui is imported lazily on first use to avoid blocking startup.
 # ConfigStore / CONFIG_JSON_PATH are resolved at the end of this block.
@@ -75,7 +76,7 @@ NAV_ITEMS = [
     ("tool1", "🔧", "Korber Automation"),
     ("tool2", "⚡", "Load Reconciliation"),
     ("tool3", "📧", "Outlook Email Sender"),
-    ("tool4", "👥", "User Data Manager"),
+    ("tool4", "👥", "User KPI"),
     ("tool5", "🚚", "Korber AuditShip"),
     ("settings", "⚙", "Settings"),
 ]
@@ -633,19 +634,11 @@ class MainApp:
         Excel sort and remote record sync in the background, never on the main thread."""
 
         def _warmup_worker():
-            for mod in ("requests", "outlook_email_gui", "efldatamanager", "reconciliation_tool"):
+            for mod in ("requests", "outlook_email_gui", "efl_app", "reconciliation_tool"):
                 try:
                     __import__(mod)
                 except Exception:
                     pass
-
-            # Pre-warm efldatamanager data
-            try:
-                import efldatamanager
-                if hasattr(efldatamanager, "preload_data"):
-                    efldatamanager.preload_data()
-            except Exception:
-                pass
 
             # Sort local sent_log.xlsx and sync remote counts — both I/O-bound,
             # safe to run in a daemon thread.
@@ -1185,6 +1178,7 @@ class MainApp:
             self._ensure_tool4()
         elif key == "tool5":
             self._ensure_tool5()
+            return  # tool5 manages its own overlay
         self._hide_loading_overlay()
 
     # ------------------------------------------------------------------
@@ -1194,7 +1188,7 @@ class MainApp:
         "tool1": "Korber Automation",
         "tool2": "Load Reconciliation",
         "tool3": "Outlook Email Sender",
-        "tool4": "User Data Manager",
+        "tool4": "User KPI",
         "tool5": "Korber AuditShip",
     }
 
@@ -1400,14 +1394,14 @@ class MainApp:
             side_pad=(0, 12)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 4: User Data Manager
+        # Card 4: User KPI
         self._make_aurora_card(
             parent=cards_row,
             icon="👥",
-            badge="TASK & METRIC LOGS",
+            badge="USER KPI",
             badge_color=AURORA_AMBER,
             accent_color=AURORA_AMBER,
-            title="User Data Manager",
+            title="User KPI",
             desc="Operator task logging, job record management, Google Sheets live sync, and daily KPI tracking.",
             page_key="tool4",
             side_pad=(0, 12)
@@ -1642,42 +1636,104 @@ class MainApp:
         if self.tool4_app is not None or self.tool4_error is not None:
             return
         try:
-            import efldatamanager
+            import efl_app
         except Exception:
             self.tool4_error = traceback.format_exc()
-            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
+            self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
             return
 
         try:
-            page.configure(bg="#060d17")
-            self.tool4_app = efldatamanager.EFLApp(
-                self.root, container=page, standalone=False
+            page.configure(bg=efl_app.BG_DARK)
+            self.tool4_app = efl_app.EFLApp(
+                self.root, container=page, standalone=False,
+                profile=load_saved_profile(),
+                on_open_settings=lambda: self.show_page("settings"),
             )
         except Exception:
             self.tool4_error = traceback.format_exc()
             self.tool4_app = None
-            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
+            self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
 
     def _ensure_tool5(self):
-        """Create a borderless, full-page native host for AuditShip."""
-        if self.tool5_ready or self.tool5_error is not None:
+        """Build a launcher page for AuditShip — process starts only when the user clicks the button."""
+        if self.tool5_ready:
             return
 
         page = self.pages["tool5"]
         try:
-            page.configure(bg="#F3F6FA")
+            page.configure(bg=BASE_BG)
 
-            self.tool5_host_frame = tk.Frame(page, bg="#F3F6FA", highlightthickness=0)
+            # Full-page host frame (needed by the embedding helpers)
+            self.tool5_host_frame = tk.Frame(page, bg=BASE_BG, highlightthickness=0)
             self.tool5_host_frame.pack(fill="both", expand=True)
             self.tool5_host_frame.bind("<Configure>", self._resize_tool5_window)
-            self._show_tool5_loading()
+
+            # ── Launcher card ─────────────────────────────────────────────
+            card_wrap = tk.Frame(self.tool5_host_frame, bg=BASE_BG)
+            card_wrap.place(relx=0.5, rely=0.42, anchor="center")
+
+            card = tk.Frame(
+                card_wrap, bg="#ffffff",
+                highlightbackground="#e2e8f0", highlightthickness=1,
+                padx=36, pady=28
+            )
+            card.pack()
+
+            # Icon
+            tk.Label(card, text="🚚", bg="#ffffff", font=("Segoe UI Emoji", 32)).pack()
+
+            # Title
+            tk.Label(
+                card, text="Korber AuditShip",
+                bg="#ffffff", fg="#0f172a",
+                font=("Segoe UI", 16, "bold")
+            ).pack(pady=(10, 4))
+
+            # Subtitle
+            tk.Label(
+                card,
+                text="Audit outbound loads and complete shipping workflows\nthrough the Korber One Mobile portal.",
+                bg="#ffffff", fg="#64748b",
+                font=("Segoe UI", 9),
+                justify="center"
+            ).pack(pady=(0, 20))
+
+            # Open AuditShip button
+            self.tool5_launch_button = tk.Button(
+                card,
+                text="  Open AuditShip  ",
+                bg=SIDEBAR_BG_ACTIVE,
+                fg="#ffffff",
+                activebackground="#1e3a5f",
+                activeforeground="#ffffff",
+                relief="flat",
+                font=("Segoe UI", 10, "bold"),
+                cursor="hand2",
+                padx=20, pady=8,
+                command=self._on_tool5_open_clicked
+            )
+            self.tool5_launch_button.pack()
 
             self.tool5_ready = True
-            self.root.after(100, self._launch_tool5)
+            self._hide_loading_overlay()
+
         except Exception:
             self.tool5_error = traceback.format_exc()
             self.tool5_ready = False
+            self._hide_loading_overlay()
             self._show_tool_error(page, "Tool 5: Korber AuditShip", self.tool5_error)
+
+    def _on_tool5_open_clicked(self):
+        """Called when the user clicks 'Open AuditShip'. Replaces the launcher card with the embedded window."""
+        # Hide the launcher card and show the loading overlay
+        if self.tool5_launch_button:
+            try:
+                self.tool5_launch_button.master.master.destroy()  # destroy card_wrap
+            except Exception:
+                pass
+        self._show_tool5_loading()
+        self.root.after(100, self._launch_tool5)
+
 
     def _auditship_executable(self):
         if getattr(sys, "frozen", False):
@@ -2360,6 +2416,42 @@ class MainApp:
         check_btn.bind("<Enter>", lambda e: check_btn.config(bg=AURORA_CYAN, fg="#0b1420"))
         check_btn.bind("<Leave>", lambda e: check_btn.config(bg="#0d1b2a", fg="#ffffff"))
 
+        # KPI identity is local to this installation and controls Tool 4.
+        kpi_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
+        kpi_card.pack(fill="x", pady=(0, 20))
+        kpi_top = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_top.pack(fill="x", pady=(0, 8))
+        tk.Label(kpi_top, text="KPI USER PROFILE", bg="#ffffff", fg="#64748b",
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+        configured_profile = load_saved_profile()
+        self.kpi_status_pill = tk.Label(
+            kpi_top, text="● Configured" if configured_profile else "● Needs Setup",
+            bg="#0d1b2a", fg=AURORA_MINT if configured_profile else "#f59e0b",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=2,
+        )
+        self.kpi_status_pill.pack(side="right")
+        tk.Label(kpi_card, text="Use your registered User ID and individual User Code for KPI entry and exports.",
+                 bg="#ffffff", fg="#64748b", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 14))
+        kpi_fields = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_fields.pack(fill="x", pady=(0, 14))
+        kpi_fields.columnconfigure(1, weight=1)
+        for row, (label, key) in enumerate((("User ID:", "kpi_user_id"), ("User Code:", "kpi_user_code"))):
+            tk.Label(kpi_fields, text=label, bg="#ffffff", fg="#0f172a",
+                     font=("Segoe UI", 9, "bold"), width=16, anchor="w").grid(
+                         row=row, column=0, sticky="w", padx=(0, 12), pady=(0, 8))
+            entry = ttk.Entry(kpi_fields, font=("Segoe UI", 9))
+            entry.insert(0, self.config_store.config.get(key, ""))
+            entry.grid(row=row, column=1, sticky="ew", pady=(0, 8))
+            setattr(self, f"{key}_entry", entry)
+        kpi_actions = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_actions.pack(fill="x")
+        tk.Button(kpi_actions, text="Save KPI Profile", bg="#0d1b2a", fg="#ffffff",
+                  font=("Segoe UI", 9, "bold"), padx=16, pady=8,
+                  relief="flat", cursor="hand2", command=self._save_kpi_profile).pack(side="left")
+        self.kpi_msg_lbl = tk.Label(kpi_actions, text="", bg="#ffffff", fg=AURORA_MINT,
+                                    font=("Segoe UI", 9, "bold"))
+        self.kpi_msg_lbl.pack(side="left", padx=(14, 0))
+
         # --- Körber Cloud Authentication Card ---
         korber_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         korber_card.pack(fill="x", pady=(0, 20))
@@ -2454,6 +2546,84 @@ class MainApp:
             kb_btn_row, text="", bg="#ffffff", fg=AURORA_MINT, font=("Segoe UI", 9, "bold")
         )
         self.korber_msg_lbl.pack(side="left", padx=(14, 0))
+
+        # --- AuditShip credentials (separate from Körber Cloud automation) ---
+        auditship_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
+        auditship_card.pack(fill="x", pady=(0, 20))
+
+        auditship_user = self.config_store.get_auditship_user() if self.config_store else ""
+        auditship_pass = self.config_store.get_auditship_pass() if self.config_store else ""
+        auditship_fork = self.config_store.get_auditship_fork_id() if self.config_store else ""
+        auditship_header = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_header.pack(fill="x", pady=(0, 8))
+        tk.Label(
+            auditship_header, text="KORBER AUDITSHIP CREDENTIALS", bg="#ffffff", fg="#64748b",
+            font=("Segoe UI", 8, "bold")
+        ).pack(side="left")
+        self.auditship_status_pill = tk.Label(
+            auditship_header,
+            text="● Configured" if auditship_user and auditship_pass and auditship_fork else "● Needs Setup",
+            bg="#0d1b2a", fg=AURORA_MINT if auditship_user and auditship_pass and auditship_fork else "#f59e0b",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=2
+        )
+        self.auditship_status_pill.pack(side="right")
+        tk.Label(
+            auditship_card,
+            text="Save the username, password, and Fork ID for the Korber AuditShip tool.",
+            bg="#ffffff", fg="#64748b", font=("Segoe UI", 9)
+        ).pack(anchor="w", pady=(0, 14))
+
+        auditship_fields = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_fields.pack(fill="x", pady=(0, 14))
+        auditship_fields.columnconfigure(1, weight=1)
+        tk.Label(
+            auditship_fields, text="User Name:", bg="#ffffff", fg="#0f172a",
+            font=("Segoe UI", 9, "bold"), width=16, anchor="w"
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.auditship_user_entry = ttk.Entry(auditship_fields, font=("Segoe UI", 9))
+        self.auditship_user_entry.insert(0, auditship_user)
+        self.auditship_user_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+
+        tk.Label(
+            auditship_fields, text="Password:", bg="#ffffff", fg="#0f172a",
+            font=("Segoe UI", 9, "bold"), width=16, anchor="w"
+        ).grid(row=1, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        auditship_password_row = tk.Frame(auditship_fields, bg="#ffffff")
+        auditship_password_row.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+        auditship_password_row.columnconfigure(0, weight=1)
+        self.auditship_pass_entry = ttk.Entry(auditship_password_row, font=("Segoe UI", 9), show="•")
+        self.auditship_pass_entry.insert(0, auditship_pass)
+        self.auditship_pass_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.auditship_pass_toggle_btn = tk.Label(
+            auditship_password_row, text="👁 Show", bg="#f1f5f9", fg="#334155",
+            font=("Segoe UI", 8, "bold"), padx=10, pady=4, cursor="hand2", bd=1, relief="solid"
+        )
+        self.auditship_pass_toggle_btn.grid(row=0, column=1)
+        self.auditship_pass_toggle_btn.bind("<Button-1>", lambda e: self._toggle_auditship_password_visibility())
+
+        tk.Label(
+            auditship_fields, text="Fork ID:", bg="#ffffff", fg="#0f172a",
+            font=("Segoe UI", 9, "bold"), width=16, anchor="w"
+        ).grid(row=2, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.auditship_fork_entry = ttk.Entry(auditship_fields, font=("Segoe UI", 9))
+        self.auditship_fork_entry.insert(0, auditship_fork)
+        self.auditship_fork_entry.grid(row=2, column=1, sticky="ew", pady=(0, 8))
+
+        auditship_button_row = tk.Frame(auditship_card, bg="#ffffff")
+        auditship_button_row.pack(fill="x", pady=(8, 0))
+        save_auditship_btn = tk.Label(
+            auditship_button_row, text="💾  Save Credentials", bg="#0d1b2a", fg="#ffffff",
+            font=("Segoe UI", 9, "bold"), padx=16, pady=8, cursor="hand2"
+        )
+        save_auditship_btn.pack(side="left", padx=(0, 10))
+        save_auditship_btn.bind("<Button-1>", lambda e: self._save_auditship_settings())
+        save_auditship_btn.bind("<Enter>", lambda e: save_auditship_btn.config(bg=AURORA_CYAN, fg="#0b1420"))
+        save_auditship_btn.bind("<Leave>", lambda e: save_auditship_btn.config(bg="#0d1b2a", fg="#ffffff"))
+        self.auditship_msg_lbl = tk.Label(
+            auditship_button_row, text="", bg="#ffffff", fg=AURORA_MINT,
+            font=("Segoe UI", 9, "bold")
+        )
+        self.auditship_msg_lbl.pack(side="left", padx=(14, 0))
 
         # --- Google Sheets & Web App Integration Card ---
         gsheet_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
@@ -2585,6 +2755,12 @@ class MainApp:
         kb_diag_status = f"{kb_user_val} (Configured)" if (kb_user_val and kb_pass_val) else ("Needs Setup" if not kb_user_val else "Password Missing")
         self._make_diag_row(diag_grid, "Körber Account:", kb_diag_status)
 
+        as_user_val = self.config_store.get_auditship_user() if self.config_store else ""
+        as_pass_val = self.config_store.get_auditship_pass() if self.config_store else ""
+        as_fork_val = self.config_store.get_auditship_fork_id() if self.config_store else ""
+        as_diag_status = f"{as_user_val} (Fork: {as_fork_val})" if (as_user_val and as_pass_val and as_fork_val) else ("Needs Setup" if not as_user_val else "Credentials Missing")
+        self._make_diag_row(diag_grid, "AuditShip Account:", as_diag_status)
+
         sync_status = "Configured" if is_configured else "Unconfigured"
         self._make_diag_row(diag_grid, "Google Cloud Sync:", sync_status)
 
@@ -2606,6 +2782,29 @@ class MainApp:
             "or contact the automation engineering team.",
             bg="#ffffff", fg="#334155", font=("Segoe UI", 9), wraplength=800, justify="left"
         ).pack(anchor="w")
+
+    def _save_kpi_profile(self):
+        try:
+            user_id, user_code = validate_profile(
+                self.kpi_user_id_entry.get(), self.kpi_user_code_entry.get()
+            )
+        except ValueError as error:
+            self.kpi_msg_lbl.config(text=str(error), fg="#dc2626")
+            return False
+
+        old_config = self.config_store.config.copy()
+        if not self.config_store.save(kpi_user_id=user_id, kpi_user_code=user_code):
+            self.config_store.config = old_config
+            self.kpi_msg_lbl.config(text="Could not save KPI profile. Check file access.", fg="#dc2626")
+            return False
+
+        self.kpi_user_id_entry.delete(0, "end")
+        self.kpi_user_id_entry.insert(0, user_id)
+        self.kpi_status_pill.config(text="● Configured", fg=AURORA_MINT)
+        self.kpi_msg_lbl.config(text="KPI profile saved.", fg=AURORA_MINT)
+        if self.tool4_app is not None:
+            self.tool4_app.set_profile((user_id, user_code))
+        return True
 
     def _toggle_korber_password_visibility(self):
         """Toggles masking on the Körber password entry."""
@@ -2647,6 +2846,32 @@ class MainApp:
         if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists():
             self.korber_msg_lbl.config(text="✓ Credentials saved successfully!", fg=AURORA_MINT)
             self.root.after(3500, lambda: self.korber_msg_lbl.config(text="") if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists() else None)
+
+    def _toggle_auditship_password_visibility(self):
+        if self.auditship_pass_entry.cget("show"):
+            self.auditship_pass_entry.config(show="")
+            self.auditship_pass_toggle_btn.config(text="🔒 Hide")
+        else:
+            self.auditship_pass_entry.config(show="•")
+            self.auditship_pass_toggle_btn.config(text="👁 Show")
+
+    def _save_auditship_settings(self):
+        user = self.auditship_user_entry.get().strip()
+        password = self.auditship_pass_entry.get().strip()
+        fork_id = self.auditship_fork_entry.get().strip()
+        if not user or not password or not fork_id:
+            messagebox.showwarning("Incomplete Credentials", "Please enter User Name, Password, and Fork ID for Korber AuditShip.")
+            return
+        if not self.config_store or not self.config_store.save(auditship_user=user, auditship_pass=password, auditship_fork_id=fork_id):
+            messagebox.showerror("Save Failed", "AuditShip credentials could not be saved. Check access to config.json.")
+            return
+        self.auditship_status_pill.config(text="● Configured", fg=AURORA_MINT)
+        self.auditship_msg_lbl.config(text="✓ Credentials saved successfully!", fg=AURORA_MINT)
+        self.root.after(
+            3500,
+            lambda: self.auditship_msg_lbl.config(text="")
+            if self.auditship_msg_lbl.winfo_exists() else None
+        )
 
     def _save_gsheet_settings(self):
         webapp_url = self.webapp_entry.get().strip()
@@ -2727,8 +2952,7 @@ class MainApp:
                 pass
         if self.tool4_app is not None:
             try:
-                self.tool4_app.close_popup_safely()
-                self.tool4_app.cancel_all_timers()
+                self.tool4_app.close()
             except Exception:
                 pass
         if self.tool5_process is not None and self.tool5_process.poll() is None:

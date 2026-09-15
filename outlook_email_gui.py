@@ -182,8 +182,10 @@ class ConfigStore:
         try:
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4)
+            return True
         except Exception as e:
             print(f"Failed to save config: {e}")
+            return False
 
     def get_webapp_url(self):
         return self.config.get("webapp_url", "")
@@ -199,6 +201,15 @@ class ConfigStore:
 
     def get_korber_url(self):
         return self.config.get("korber_url", "") or os.environ.get("KORBER_URL", "https://lopwaprodweb.koerbercloud.com/core/Default.html")
+
+    def get_auditship_user(self):
+        return self.config.get("auditship_user", "") or os.environ.get("AUDITSHIP_USER", "")
+
+    def get_auditship_pass(self):
+        return self.config.get("auditship_pass", "") or os.environ.get("AUDITSHIP_PASS", "")
+
+    def get_auditship_fork_id(self):
+        return self.config.get("auditship_fork_id", "") or os.environ.get("AUDITSHIP_FORK_ID", "")
 
 
 # --------------------------------------------------------------------------

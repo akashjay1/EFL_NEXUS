@@ -61,6 +61,24 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+IGNORED_FILES = {
+    "config.json",
+    ".efl_records_cache.json",
+    "build.txt",
+}
+
+
+def _should_ignore_file(rel_posix: str) -> bool:
+    rel_lower = rel_posix.lower()
+    if rel_lower in IGNORED_FILES or os.path.basename(rel_lower) in IGNORED_FILES:
+        return True
+    if rel_lower.endswith(".old") or rel_lower.endswith(".tmp") or rel_lower.endswith(".pyc"):
+        return True
+    if "__pycache__" in rel_lower or ".git" in rel_lower:
+        return True
+    return False
+
+
 def _index_dir(root: Path) -> dict:
     """Return {relative_posix_path: sha256} for every file under *root*."""
     index = {}
@@ -68,8 +86,11 @@ def _index_dir(root: Path) -> dict:
     for p in root.rglob("*"):
         if p.is_file():
             rel = p.relative_to(root).as_posix()
+            if _should_ignore_file(rel):
+                continue
             index[rel] = _sha256(p)
     return index
+
 
 
 def _extract_zip_to_temp(zip_path: Path):
