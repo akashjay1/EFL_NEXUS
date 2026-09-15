@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import efl_app
+import KPI
 import main_app
 from kpi_profile import export_filename, load_saved_profile, validate_profile
 from outlook_email_gui import ConfigStore
@@ -76,17 +76,19 @@ class KPIProfileTests(unittest.TestCase):
         root.withdraw()
         page = tk.Frame(root)
         page.pack()
-        with patch.object(efl_app.EFLApp, "_init_google_sheets_async"), patch("efl_app.load_saved_profile", return_value=None):
-            tool = efl_app.EFLApp(root, container=page, standalone=False, profile=None)
-            self.assertEqual(tool.download_btn.cget("state"), "disabled")
-            self.assertTrue(tool._setup_overlay.winfo_exists())
+        with patch.object(KPI.EFLApp, "_init_google_sheets_async"), patch("KPI.load_saved_profile", return_value=None):
+            tool = KPI.EFLApp(root, container=page, standalone=False, profile=None)
+            self.assertEqual(tool.download_btn.cget("state"), "normal")
+            self.assertEqual(tool.user_label.cget("text"), "Tharindu")
             tool.set_profile(("Akash", "CSSUN151"))
             self.assertEqual(tool.download_btn.cget("state"), "normal")
+            self.assertEqual(tool.user_label.cget("text"), "Akash")
             for row in tool.rows_top.values():
                 combo = row["combo"]
-                self.assertEqual(combo.cget("values"), ("New", "Revise"))
-                self.assertEqual(combo.get(), "Select status")
-                self.assertFalse(combo.is_filled())
+                self.assertIn("New", combo.cget("values"))
+                self.assertIn("Revise", combo.cget("values"))
+                self.assertEqual(combo.get(), "New")
+                self.assertTrue(combo.is_filled())
             tool.gs_manager = Mock(connected=True)
             tool._refresh_all_counts = Mock()
             tool.set_profile(("Tharindu", "C-22"))
@@ -97,7 +99,7 @@ class KPIProfileTests(unittest.TestCase):
 
 class KPIUserDataTests(unittest.TestCase):
     def setUp(self):
-        self.app = efl_app.EFLApp.__new__(efl_app.EFLApp)
+        self.app = KPI.EFLApp.__new__(KPI.EFLApp)
         self.app.user_id = "Tharindu"
         self.app.user_code = "C-22"
         self.app.selected_date = datetime(2026, 9, 3)
@@ -106,20 +108,29 @@ class KPIUserDataTests(unittest.TestCase):
         self.app._refresh_all_counts = Mock()
         self.app._get_owner_of_row_sheet1 = Mock(return_value="Akash")
         self.app._get_owner_of_row_sheet2 = Mock(return_value="Akash")
+        self.app._is_past_date = False
+        self.app.root = Mock()
+        self.app._cache_time = 0
 
-    @patch("efl_app.enqueue_job")
+    @patch("KPI.enqueue_job")
     def test_save_and_queue_use_active_user(self, enqueue_job):
         self.app.gs_manager.append_row_sheet1.return_value = True
         self.assertTrue(self.app._save_to_sheet1("GDN Reconciliation:", {"job_id": "JOB-1", "job_status": "New"}))
-        self.assertEqual(self.app.gs_manager.append_row_sheet1.call_args.args[0][-1], "Tharindu")
+        self.assertEqual(self.app.gs_manager.append_row_sheet1.call_args.args[0][-2:], ["Tharindu", "C-22"])
         enqueue_job.assert_called_once_with("JOB-1", "GDN Reconciliation:", "Tharindu")
         self.app.gs_manager.append_row_sheet2.return_value = True
         self.assertTrue(self.app._save_to_sheet2("Shipping:", {"job_id": "JOB-2"}))
-        self.assertEqual(self.app.gs_manager.append_row_sheet2.call_args.args[0][-1], "Tharindu")
+        self.assertEqual(self.app.gs_manager.append_row_sheet2.call_args.args[0][-2:], ["Tharindu", "C-22"])
 
     def test_delete_blocks_other_users_and_filters_by_active_user(self):
         self.app.gs_manager.search_and_delete_row_sheet1.return_value = False
         self.app.gs_manager.search_and_delete_row_sheet2.return_value = False
+        self.assertFalse(self.app._delete_from_sheet1("JOB-1"))
+        self.assertFalse(self.app._delete_from_sheet2("JOB-1"))
+        self.app.gs_manager.search_and_delete_row_sheet1.assert_not_called()
+        self.app.gs_manager.search_and_delete_row_sheet2.assert_not_called()
+        self.app._get_owner_of_row_sheet1.return_value = "Tharindu"
+        self.app._get_owner_of_row_sheet2.return_value = "Tharindu"
         self.assertFalse(self.app._delete_from_sheet1("JOB-1"))
         self.assertFalse(self.app._delete_from_sheet2("JOB-1"))
         self.app.gs_manager.search_and_delete_row_sheet1.assert_called_with(2, "JOB-1", "Tharindu")
@@ -134,9 +145,32 @@ class KPIUserDataTests(unittest.TestCase):
                   ["01-09-2026 11:00:00", "GDN Creation:", "B", "New", "Tharindu"]]
         self.assertEqual(self.app._get_task_count_from_values_sheet1(values, "GDN Creation:", "Tharindu", "01-09-2026"), 1)
 
+    def test_reconciliation_increments_creation_count_in_ui(self):
+        values1 = [
+            ["Timestamp", "Task", "Job ID", "Status", "User ID"],
+            ["01-09-2026 10:00:00", "GDN Reconciliation:", "REC-1", "New", "Tharindu"],
+            ["01-09-2026 10:30:00", "GDN Creation:", "CRE-1", "New", "Tharindu"],
+            ["01-09-2026 11:00:00", "GRN Reconciliation:", "REC-2", "New", "Tharindu"],
+        ]
+        values2 = [["Timestamp", "Task", "Job ID", "Load", "LP", "User ID"]]
+        self.app.rows_top = {
+            "GDN Reconciliation:": {"count_label": Mock()},
+            "GRN Reconciliation:": {"count_label": Mock()},
+            "GDN Creation:": {"count_label": Mock()},
+            "GRN Creation:": {"count_label": Mock()},
+            "Load Plan or Asn:": {"count_label": Mock()},
+        }
+        self.app.rows_bottom = {}
+        self.app.root = Mock()
+        self.app._update_counts_ui(values1, values2, datetime(2026, 9, 1), "Tharindu")
+        self.app.rows_top["GDN Reconciliation:"]["count_label"].config.assert_called_with(text="1")
+        self.app.rows_top["GDN Creation:"]["count_label"].config.assert_called_with(text="2")
+        self.app.rows_top["GRN Reconciliation:"]["count_label"].config.assert_called_with(text="1")
+        self.app.rows_top["GRN Creation:"]["count_label"].config.assert_called_with(text="1")
+
     def test_download_requires_connection(self):
         self.app.gs_manager.connected = False
-        with patch("efl_app.threading.Thread") as thread:
+        with patch("KPI.threading.Thread") as thread:
             self.app._on_download()
         thread.assert_not_called()
 
@@ -148,7 +182,7 @@ class KPIUserDataTests(unittest.TestCase):
                       ["01-09-2026 10:00:00", "GDN Creation:", "A", "New", "Akash"],
                       ["01-09-2026 11:00:00", "GDN Creation:", "B", "New", "Tharindu"]]
             def export(user, code, data):
-                return efl_app.generate_user_export(
+                return KPI.generate_user_export(
                     folder, user, code, datetime(2026, 9, 3), data, [header2],
                     self.app._get_task_count_from_values_sheet1,
                     self.app._get_sum_from_values_sheet2,

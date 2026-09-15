@@ -65,12 +65,19 @@ IGNORED_FILES = {
     "config.json",
     ".efl_records_cache.json",
     "build.txt",
+    "sent_log.xlsx",
+    "updater.log",
+    "reconciliation_queue.json",
+    ".load_reconciliation_tool_settings.json",
 }
 
 
 def _should_ignore_file(rel_posix: str) -> bool:
     rel_lower = rel_posix.lower()
-    if rel_lower in IGNORED_FILES or os.path.basename(rel_lower) in IGNORED_FILES:
+    base_lower = os.path.basename(rel_lower)
+    if rel_lower in IGNORED_FILES or base_lower in IGNORED_FILES:
+        return True
+    if base_lower.startswith("~$"):
         return True
     if rel_lower.endswith(".old") or rel_lower.endswith(".tmp") or rel_lower.endswith(".pyc"):
         return True

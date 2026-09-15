@@ -634,7 +634,7 @@ class MainApp:
         Excel sort and remote record sync in the background, never on the main thread."""
 
         def _warmup_worker():
-            for mod in ("requests", "outlook_email_gui", "efl_app", "reconciliation_tool"):
+            for mod in ("requests", "outlook_email_gui", "KPI", "reconciliation_tool"):
                 try:
                     __import__(mod)
                 except Exception:
@@ -1636,15 +1636,15 @@ class MainApp:
         if self.tool4_app is not None or self.tool4_error is not None:
             return
         try:
-            import efl_app
+            import KPI
         except Exception:
             self.tool4_error = traceback.format_exc()
             self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
             return
 
         try:
-            page.configure(bg=efl_app.BG_DARK)
-            self.tool4_app = efl_app.EFLApp(
+            page.configure(bg=KPI.BG_DARK)
+            self.tool4_app = KPI.EFLApp(
                 self.root, container=page, standalone=False,
                 profile=load_saved_profile(),
                 on_open_settings=lambda: self.show_page("settings"),

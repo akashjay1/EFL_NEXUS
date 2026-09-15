@@ -1,6 +1,7 @@
 # EFL NEXUS v1.0.7 — Release Notes
 
 ## Overview
+**EFL NEXUS v1.0.7** introduces the fully integrated **User KPI** module (formerly EFL Data Entry) for comprehensive operator metric logging, live cloud synchronization, and automated queue integration, alongside a dedicated launcher and dynamic credential bridge for **Korber AuditShip**.
 **EFL NEXUS v1.0.7** introduces the fully integrated **User KPI** module (formerly EFL Data Entry) for comprehensive operator metric logging, live cloud synchronization, and automated queue integration, alongside a dedicated launcher, dynamic credential support, and Equipment Zone / Fork ID configuration for **Korber AuditShip**.
 
 ---
@@ -28,8 +29,11 @@
 
 ---
 
+### 🚚 Korber AuditShip Enhancements & Dynamic Credentials
 ### 🚚 Korber AuditShip — Dynamic Credentials & Equipment Zone Support
 - **Dedicated Launcher Screen**: Selecting *Korber AuditShip* presents a clean launcher interface with an **"Open AuditShip"** button, preventing unwanted background process execution until requested.
+- **Dynamic Credential Bridge**: Injected a bytecode bridge into `KORBER AuditShip.exe` (`_AUDITSHIP_CREDENTIAL_BRIDGE_V2`), enabling AuditShip to read user credentials and Fork IDs directly from `config.json`.
+- **Custom Fork ID Support**: Removed the hardcoded `LPAKASHM` requirement, allowing operators to configure their custom Fork ID in Settings.
 - **Dynamic Username & Password Support**: AuditShip now dynamically authenticates using operator credentials saved in EFL NEXUS Settings, replacing hardcoded login parameters.
 - **Equipment Zone & Fork ID Support**: Full support for custom **Fork ID / Equipment Zone** identifiers. Operators are no longer constrained to hardcoded zone identifiers (`LPAKASHM`).
 - **Password Visibility Toggle**: Added an **👁 Show / 🔒 Hide** toggle button for secure and accurate credential entry.
@@ -56,3 +60,4 @@
 ## Version Metadata
 - **Version**: `1.0.7` ([`version.txt`](file:///d:/EFL_NEXUS/version.txt))
 - **Build**: `0` ([`build.txt`](file:///d:/EFL_NEXUS/build.txt))
+
