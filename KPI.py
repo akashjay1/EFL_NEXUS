@@ -819,7 +819,8 @@ class PlaceholderEntry(tk.Entry):
         self.bind('<FocusIn>', self._on_focus_in)
         self.bind('<FocusOut>', self._on_focus_out)
         self.bind('<KeyRelease>', self._on_key_release)
-        self._add_placeholder()
+        if self.placeholder:
+            self._add_placeholder()
 
     def _on_focus_in(self, event=None):
         self._is_focused = True
@@ -830,14 +831,17 @@ class PlaceholderEntry(tk.Entry):
 
     def _on_focus_out(self, event=None):
         self._is_focused = False
-        if not self.get().strip():
+        if self.placeholder and not self.get().strip():
             self._add_placeholder()
 
     def _on_key_release(self, event=None):
-        if not self._is_focused and not self.get().strip():
+        if self.placeholder and not self._is_focused and not self.get().strip():
             self._add_placeholder()
 
     def _add_placeholder(self):
+        if not self.placeholder:
+            self._has_placeholder = False
+            return
         self.delete(0, 'end')
         self.insert(0, self.placeholder)
         self.config(fg=self.placeholder_color)
@@ -849,7 +853,12 @@ class PlaceholderEntry(tk.Entry):
         return self.get().strip()
 
     def reset(self):
-        self._add_placeholder()
+        if self.placeholder:
+            self._add_placeholder()
+        else:
+            self.delete(0, 'end')
+            self.config(fg=self.default_fg)
+            self._has_placeholder = False
 
     def is_filled(self):
         return bool(self.get_value())
@@ -910,6 +919,36 @@ class PlaceholderCombobox(ttk.Combobox):
 
 
 # ==========================================
+# ACTIVITY LOGGING SYSTEM
+# ==========================================
+_activity_logs = []
+_activity_log_lock = threading.Lock()
+_current_app_instance = None
+
+
+def add_activity_log(category, message, level="INFO"):
+    """Thread-safe activity logger with timestamping and UI dispatch."""
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    entry = {
+        "timestamp": timestamp,
+        "category": category,
+        "level": level,
+        "message": message
+    }
+    with _activity_log_lock:
+        _activity_logs.append(entry)
+        if len(_activity_logs) > 200:
+            _activity_logs.pop(0)
+
+    if _current_app_instance and hasattr(_current_app_instance, "_on_activity_log_added"):
+        try:
+            if hasattr(_current_app_instance, 'root') and hasattr(_current_app_instance.root, 'after'):
+                _current_app_instance.root.after(0, lambda e=entry: _current_app_instance._on_activity_log_added(e))
+        except Exception:
+            pass
+
+
+# ==========================================
 # EFLAPP MAIN CLASS
 # ==========================================
 class EFLApp:
@@ -946,6 +985,9 @@ class EFLApp:
         self._auto_refresh_interval = 60
         self._auto_refresh_id = None
 
+        global _current_app_instance
+        _current_app_instance = self
+
         self._setup_window()
         self._setup_styles()
         self._build_ui()
@@ -953,6 +995,10 @@ class EFLApp:
         if self.standalone:
             self.root.after(10, self._apply_dark_title_bar)
         self.root.after(50, self._init_google_sheets_async)
+        self.add_activity_log("SYSTEM", f"User KPI ready for {self.user_id} ({self.user_code})", "INFO")
+
+    def add_activity_log(self, category, message, level="INFO"):
+        add_activity_log(category, message, level)
 
     def set_profile(self, profile):
         old_user = self.user_id
@@ -966,6 +1012,9 @@ class EFLApp:
             self.user_label.config(text=self.user_id or "Not configured")
         if hasattr(self, 'user_code_label') and self.user_code_label.winfo_exists():
             self.user_code_label.config(text=self.user_code or "")
+
+        if old_user != self.user_id:
+            self.add_activity_log("PROFILE", f"Operator profile changed to {self.user_id} ({self.user_code})", "INFO")
 
         self._cache_time = 0
         if self.user_id != old_user:
@@ -1041,12 +1090,14 @@ class EFLApp:
     def _on_connected(self):
         self._update_status(True)
         self._show_message("Connected to Google Sheets!", MSG_SUCCESS, 2500)
+        self.add_activity_log("CONNECT", "Connected to Google Sheets successfully", "SUCCESS")
         self.root.after(50, self._refresh_all_counts)
         self._start_auto_refresh()
 
     def _on_disconnected(self):
         self._update_status(False)
         self._show_message("Failed to connect to Google Sheets", MSG_ERROR, 5000)
+        self.add_activity_log("CONNECT", "Failed to connect to Google Sheets", "ERROR")
 
     def _update_status(self, connected):
         try:
@@ -1128,6 +1179,7 @@ class EFLApp:
         self._build_user_row()
         self._build_top_panel()
         self._build_bottom_panel()
+        self._build_activity_log()
         self._build_footer()
         self.root.update_idletasks()
 
@@ -1241,7 +1293,7 @@ class EFLApp:
         right_frame = tk.Frame(row, bg=CARD_BG)
         right_frame.pack(side='left', padx=(10, 0), fill='x', expand=True)
 
-        entry = PlaceholderEntry(right_frame, placeholder='Job ID', width=14)
+        entry = PlaceholderEntry(right_frame, placeholder='', width=14)
         entry.pack(side='left', padx=(0, 6), ipady=3)
 
         extra_entries = []
@@ -1351,7 +1403,125 @@ class EFLApp:
         for label, has_lp in row_configs:
             self.rows_bottom[label] = self._make_row(card, label, has_extra_counts=True, has_lp_count=has_lp)
 
-        self.root.update_idletasks()
+    def _build_activity_log(self):
+        self.log_card = tk.Frame(self.root, bg=CARD_BG, highlightbackground=CARD_BORDER, highlightthickness=1, padx=14, pady=8)
+        self.log_card.pack(fill='x', padx=18, pady=(0, 10))
+
+        header = tk.Frame(self.log_card, bg=CARD_BG)
+        header.pack(fill='x')
+
+        title_box = tk.Frame(header, bg=CARD_BG)
+        title_box.pack(side='left')
+
+        tk.Label(title_box, text="Activity Log", bg=CARD_BG, fg=TEXT_MAIN, font=('Segoe UI', 10, 'bold')).pack(side='left')
+        self.log_count_badge = tk.Label(title_box, text="0 events", bg='#f1f5f9', fg=TEXT_MUTED, font=('Segoe UI', 8), padx=6, pady=1)
+        self.log_count_badge.pack(side='left', padx=(8, 0))
+
+        action_box = tk.Frame(header, bg=CARD_BG)
+        action_box.pack(side='right')
+
+        self.log_toggle_btn = tk.Button(
+            action_box, text="▾ Hide", bg=CARD_BG, fg=TEXT_MUTED, activebackground='#f8fafc',
+            relief='flat', font=('Segoe UI', 8, 'bold'), cursor='hand2', padx=6, pady=1,
+            command=self._toggle_activity_log
+        )
+        self.log_toggle_btn.pack(side='right', padx=(4, 0))
+
+        clear_btn = tk.Button(
+            action_box, text="🗑 Clear", bg=CARD_BG, fg=TEXT_MUTED, activebackground='#fee2e2',
+            activeforeground='#dc2626', relief='flat', font=('Segoe UI', 8), cursor='hand2', padx=6, pady=1,
+            command=self._clear_activity_log
+        )
+        clear_btn.pack(side='right', padx=(4, 0))
+
+        copy_btn = tk.Button(
+            action_box, text="📋 Copy", bg=CARD_BG, fg=TEXT_MUTED, activebackground='#f1f5f9',
+            relief='flat', font=('Segoe UI', 8), cursor='hand2', padx=6, pady=1,
+            command=self._copy_activity_log
+        )
+        copy_btn.pack(side='right', padx=(4, 0))
+
+        self.log_body = tk.Frame(self.log_card, bg=CARD_BG)
+        self.log_body.pack(fill='x', pady=(6, 0))
+
+        self.log_text = tk.Text(
+            self.log_body, height=4, bg='#f8fafc', fg='#334155', font=('Consolas', 9),
+            wrap='none', relief='flat', highlightthickness=1, highlightbackground=CARD_BORDER,
+            highlightcolor=CARD_BORDER, state='disabled', padx=8, pady=6
+        )
+        scroll = ttk.Scrollbar(self.log_body, orient='vertical', command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scroll.set)
+
+        scroll.pack(side='right', fill='y')
+        self.log_text.pack(side='left', fill='x', expand=True)
+
+        self.log_text.tag_config('ts', foreground='#94a3b8')
+        self.log_text.tag_config('cat', foreground='#0284c7', font=('Consolas', 9, 'bold'))
+        self.log_text.tag_config('lvl_SUCCESS', foreground='#16a34a', font=('Consolas', 9, 'bold'))
+        self.log_text.tag_config('lvl_ERROR', foreground='#dc2626', font=('Consolas', 9, 'bold'))
+        self.log_text.tag_config('lvl_WARN', foreground='#d97706', font=('Consolas', 9, 'bold'))
+        self.log_text.tag_config('lvl_INFO', foreground='#2563eb', font=('Consolas', 9, 'bold'))
+        self.log_text.tag_config('msg', foreground='#1e293b')
+
+        self.log_expanded = True
+        self._populate_initial_logs()
+
+    def _toggle_activity_log(self):
+        if self.log_expanded:
+            self.log_body.pack_forget()
+            self.log_toggle_btn.config(text="▸ Show")
+            self.log_expanded = False
+        else:
+            self.log_body.pack(fill='x', pady=(6, 0))
+            self.log_toggle_btn.config(text="▾ Hide")
+            self.log_expanded = True
+
+    def _copy_activity_log(self):
+        with _activity_log_lock:
+            lines = [f"[{l['timestamp']}] [{l['category']}] [{l['level']}] {l['message']}" for l in _activity_logs]
+        if not lines:
+            self._show_message("Activity log is empty", MSG_INFO, 1500)
+            return
+        text_data = "\n".join(lines)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text_data)
+        self._show_message("Activity log copied to clipboard", MSG_SUCCESS, 2000)
+
+    def _clear_activity_log(self):
+        with _activity_log_lock:
+            _activity_logs.clear()
+        if hasattr(self, 'log_text') and self.log_text.winfo_exists():
+            self.log_text.config(state='normal')
+            self.log_text.delete('1.0', 'end')
+            self.log_text.config(state='disabled')
+        if hasattr(self, 'log_count_badge') and self.log_count_badge.winfo_exists():
+            self.log_count_badge.config(text="0 events")
+        self.add_activity_log("SYSTEM", "Activity log cleared", "INFO")
+
+    def _on_activity_log_added(self, entry):
+        if not hasattr(self, 'log_text') or not self.log_text.winfo_exists():
+            return
+        try:
+            self.log_text.config(state='normal')
+            self.log_text.insert('end', f"{entry['timestamp']} ", 'ts')
+            self.log_text.insert('end', f"[{entry['category'][:7]:<7}] ", 'cat')
+            self.log_text.insert('end', f"[{entry['level'][:7]:<7}] ", f"lvl_{entry['level']}")
+            self.log_text.insert('end', f"{entry['message']}\n", 'msg')
+            self.log_text.see('end')
+            self.log_text.config(state='disabled')
+
+            with _activity_log_lock:
+                count = len(_activity_logs)
+            if hasattr(self, 'log_count_badge') and self.log_count_badge.winfo_exists():
+                self.log_count_badge.config(text=f"{count} event{'s' if count != 1 else ''}")
+        except Exception:
+            pass
+
+    def _populate_initial_logs(self):
+        with _activity_log_lock:
+            logs = list(_activity_logs)
+        for entry in logs:
+            self._on_activity_log_added(entry)
 
     def _build_footer(self):
         footer = tk.Frame(self.root, bg=BASE_BG)
@@ -1654,6 +1824,7 @@ class EFLApp:
                 row_data['count_label'].config(text=txt)
 
             self.root.update_idletasks()
+            self.add_activity_log("SYNC", f"Counts refreshed for {date_str}", "INFO")
         except Exception as e:
             print(f"Error updating UI counts: {e}")
 
@@ -1721,13 +1892,16 @@ class EFLApp:
                     except Exception:
                         pass
                 self._show_message(f"Saved: {data.get('job_id', '')}", MSG_SUCCESS, 2000)
+                self.add_activity_log("TASK", f"Submitted '{task_name.rstrip(':')}' | Job: {data.get('job_id', '')} | Status: {job_status}", "SUCCESS")
                 self._cache_time = 0
                 self.root.after(100, self._refresh_all_counts)
                 return True
+            self.add_activity_log("TASK", f"Failed saving '{task_name.rstrip(':')}' | Job: {data.get('job_id', '')}", "ERROR")
             return False
         except Exception as e:
             print(f"Error saving to Sheet1: {e}")
             self._show_message("Save failed", MSG_ERROR, 2000)
+            self.add_activity_log("TASK", f"Save error: {e}", "ERROR")
             return False
 
     def _save_to_sheet2(self, section, data):
@@ -1745,13 +1919,16 @@ class EFLApp:
             success = self.gs_manager.append_row_sheet2(row)
             if success:
                 self._show_message(f"Saved: {data.get('job_id', '')}", MSG_SUCCESS, 2000)
+                self.add_activity_log("TASK", f"Submitted '{task_name.rstrip(':')}' | Job: {data.get('job_id', '')} | Loads: {data.get('load_count', '')} | LPs: {data.get('lp_count', '')}", "SUCCESS")
                 self._cache_time = 0
                 self.root.after(100, self._refresh_all_counts)
                 return True
+            self.add_activity_log("TASK", f"Failed saving '{task_name.rstrip(':')}' | Job: {data.get('job_id', '')}", "ERROR")
             return False
         except Exception as e:
             print(f"Error saving to Sheet2: {e}")
             self._show_message("Save failed", MSG_ERROR, 2000)
+            self.add_activity_log("TASK", f"Save error: {e}", "ERROR")
             return False
 
     def _delete_from_sheet1(self, job_id):
@@ -1765,13 +1942,16 @@ class EFLApp:
             owner = self._get_owner_of_row_sheet1(job_id)
             if owner is None:
                 self._show_message("Job ID not found", MSG_ERROR, 2000)
+                self.add_activity_log("TASK", f"Delete failed: '{job_id}' not found in Sheet1", "WARN")
                 return False
             if owner.lower() != self.user_id.lower():
                 self._show_message(f"Cannot delete - Assigned by {owner}", MSG_WARNING, 3000)
+                self.add_activity_log("TASK", f"Delete blocked: '{job_id}' (Assigned by {owner})", "WARN")
                 return False
             success = self.gs_manager.search_and_delete_row_sheet1(2, job_id, self.user_id)
             if success:
                 self._show_message(f"Deleted: {job_id}", MSG_SUCCESS, 2000)
+                self.add_activity_log("TASK", f"Deleted '{job_id}' from Sheet1", "SUCCESS")
                 self._cache_time = 0
                 self.root.after(100, self._refresh_all_counts)
                 return True
@@ -1779,6 +1959,7 @@ class EFLApp:
         except Exception as e:
             print(f"Error deleting from Sheet1: {e}")
             self._show_message("Delete failed", MSG_ERROR, 2000)
+            self.add_activity_log("TASK", f"Delete error: {e}", "ERROR")
             return False
 
     def _delete_from_sheet2(self, job_id):
@@ -1792,13 +1973,16 @@ class EFLApp:
             owner = self._get_owner_of_row_sheet2(job_id)
             if owner is None:
                 self._show_message("Job ID not found", MSG_ERROR, 2000)
+                self.add_activity_log("TASK", f"Delete failed: '{job_id}' not found in Sheet2", "WARN")
                 return False
             if owner.lower() != self.user_id.lower():
                 self._show_message(f"Cannot delete - Assigned by {owner}", MSG_WARNING, 3000)
+                self.add_activity_log("TASK", f"Delete blocked: '{job_id}' (Assigned by {owner})", "WARN")
                 return False
             success = self.gs_manager.search_and_delete_row_sheet2(2, job_id, self.user_id)
             if success:
                 self._show_message(f"Deleted: {job_id}", MSG_SUCCESS, 2000)
+                self.add_activity_log("TASK", f"Deleted '{job_id}' from Sheet2", "SUCCESS")
                 self._cache_time = 0
                 self.root.after(100, self._refresh_all_counts)
                 return True
@@ -1806,6 +1990,7 @@ class EFLApp:
         except Exception as e:
             print(f"Error deleting from Sheet2: {e}")
             self._show_message("Delete failed", MSG_ERROR, 2000)
+            self.add_activity_log("TASK", f"Delete error: {e}", "ERROR")
             return False
 
     def _on_submit(self, section, entry, extra_entries=None, combo=None):
@@ -1834,6 +2019,7 @@ class EFLApp:
                 existing_user = self._is_duplicate_in_sheet1(section, job_id, job_status)
                 if existing_user:
                     self._show_message(f"Already assigned by {existing_user}", MSG_WARNING, 3000)
+                    self.add_activity_log("TASK", f"Duplicate blocked: '{section.rstrip(':')}' -> Job {job_id} (Already assigned by {existing_user})", "WARN")
                     return
                 if self._save_to_sheet1(section, data):
                     self._reset_all_rows()
@@ -1892,6 +2078,7 @@ class EFLApp:
 
             start_date, end_date = compute_export_range(self.selected_date)
             range_str = f"{start_date.strftime('%d-%m-%Y')} → {end_date.strftime('%d-%m-%Y')}"
+            self.add_activity_log("EXPORT", f"Starting KPI export for {self.user_id} ({range_str})...", "INFO")
 
             counts_by_day = build_counts_for_range(
                 values1, values2, self.user_id, start_date, end_date,
@@ -1914,7 +2101,8 @@ class EFLApp:
 
             if not chosen_folder[0]:
                 self.root.after(0, lambda: self._show_message(
-                    "Download cancelled — no folder selected", MSG_WARNING, 3000))
+                    "Download cancelled - no folder selected", MSG_WARNING, 3000))
+                self.add_activity_log("EXPORT", "Download cancelled - no folder selected", "WARN")
                 return
 
             path = os.path.join(chosen_folder[0], EXCEL_FILENAME)
@@ -1922,6 +2110,7 @@ class EFLApp:
             if not ensure_excel_exists(path):
                 self.root.after(0, lambda: self._show_message(
                     f"Could not create Excel at {path}", MSG_ERROR, 5000))
+                self.add_activity_log("EXPORT", f"Could not create Excel at {path}", "ERROR")
                 return
 
             ok, message, details = write_counts_to_excel(
@@ -1940,13 +2129,16 @@ class EFLApp:
             if ok:
                 self.root.after(0, lambda: self._show_message(
                     f"✔ Excel saved ({range_str})", MSG_SUCCESS, 5000))
+                self.add_activity_log("EXPORT", f"Excel exported: {os.path.basename(path)} ({range_str})", "SUCCESS")
             else:
                 self.root.after(0, lambda: self._show_message(
                     f"✘ {message}", MSG_ERROR, 5000))
+                self.add_activity_log("EXPORT", f"Export failed: {message}", "ERROR")
         except Exception as e:
             print(f"[DOWNLOAD] Error: {e}")
             self.root.after(0, lambda: self._show_message(
                 f"Download failed: {e}", MSG_ERROR, 5000))
+            self.add_activity_log("EXPORT", f"Export error: {e}", "ERROR")
 
     def _reconnect_thread(self):
         if not self.gs_manager:

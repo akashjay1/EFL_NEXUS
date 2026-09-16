@@ -202,6 +202,34 @@ class KPIUserDataTests(unittest.TestCase):
             ws = openpyxl.load_workbook(path_t).active
             self.assertEqual(ws.max_row, 15)
 
+    def test_activity_log_buffer_and_levels(self):
+        KPI.add_activity_log("TEST", "Informational note", "INFO")
+        KPI.add_activity_log("TASK", "Task succeeded", "SUCCESS")
+        with KPI._activity_log_lock:
+            recent = [e for e in KPI._activity_logs if e.get("category") in ("TEST", "TASK")]
+        self.assertTrue(len(recent) >= 2)
+        self.assertEqual(recent[-1]["level"], "SUCCESS")
+        self.assertEqual(recent[-1]["message"], "Task succeeded")
+
+    def test_activity_log_ui_clear(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            with patch("KPI.GoogleSheetsManager"):
+                app = KPI.EFLApp(root, standalone=True)
+                app.add_activity_log("UI_TEST", "Render event", "INFO")
+                root.update()
+                content = app.log_text.get("1.0", "end")
+                self.assertIn("UI_TEST", content)
+                self.assertIn("Render event", content)
+                app._clear_activity_log()
+                root.update()
+                self.assertIn("Activity log cleared", app.log_text.get("1.0", "end"))
+                app.close()
+        finally:
+            root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
+
