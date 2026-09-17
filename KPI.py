@@ -1022,6 +1022,41 @@ class EFLApp:
         if self.gs_manager and self.gs_manager.connected:
             self._refresh_all_counts()
 
+    def prefill_reconciliation_job(self, job_id: str, section: str) -> bool:
+        """Prefill a reconciliation row entry with *job_id* and reset combo to 'New'.
+
+        Called by the main app when Tool 6 starts a job, so the operator only
+        needs to verify the entry and click Submit.
+
+        Args:
+            job_id:  The job ID string (e.g., ``'OUT_0000007024'``).
+            section: Row key, e.g., ``'GDN Reconciliation:'`` or ``'GRN Reconciliation:'``.
+
+        Returns:
+            ``True`` if the entry was successfully prefilled; ``False`` otherwise.
+        """
+        row = self.rows_top.get(section)
+        if not row:
+            return False
+        entry = row.get("entry")
+        if entry is None:
+            return False
+        # Programmatically set the value — bypass placeholder logic cleanly.
+        entry._has_placeholder = False
+        entry.delete(0, "end")
+        entry.insert(0, job_id)
+        entry.config(fg=entry.default_fg)
+        # Reset status combo to 'New'
+        combo = row.get("combo")
+        if combo:
+            combo.reset()
+        self.add_activity_log(
+            "TASK",
+            f"Job {job_id} prefilled into '{section.rstrip(':')}' from Tool 6",
+            "INFO",
+        )
+        return True
+
     def close(self):
         self._anim_running = False
         for cb_id in (self._auto_refresh_id, self._msg_after_id):

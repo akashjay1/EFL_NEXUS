@@ -158,6 +158,15 @@ class ConfigStore:
                     return json.load(f)
             except Exception:
                 pass
+        try:
+            if os.path.abspath(self.path) == os.path.abspath(CONFIG_JSON_PATH):
+                local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+                fallback_path = os.path.join(local_app_data, "EFL_NEXUS", "config.json")
+                if fallback_path != self.path and os.path.exists(fallback_path):
+                    with open(fallback_path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+        except Exception:
+            pass
         return {
             "webapp_url": "",
             "sheet_url": "",
@@ -174,17 +183,33 @@ class ConfigStore:
         if korber_user is not None:
             self.config["korber_user"] = str(korber_user).strip()
         if korber_pass is not None:
-            self.config["korber_pass"] = str(korber_pass).strip()
+            self.config["korber_pass"] = str(korber_pass)
         if korber_url is not None:
             self.config["korber_url"] = str(korber_url).strip()
         for k, v in kwargs.items():
-            self.config[k] = str(v).strip() if v is not None else ""
+            self.config[k] = (str(v) if k.endswith("_pass") else str(v).strip()) if v is not None else ""
         try:
+            dir_name = os.path.dirname(os.path.abspath(self.path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4)
             return True
         except Exception as e:
-            print(f"Failed to save config: {e}")
+            print(f"Failed to save config to {self.path}: {e}")
+            try:
+                if os.path.abspath(self.path) == os.path.abspath(CONFIG_JSON_PATH):
+                    local_app_data = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+                    fallback_dir = os.path.join(local_app_data, "EFL_NEXUS")
+                    os.makedirs(fallback_dir, exist_ok=True)
+                    fallback_path = os.path.join(fallback_dir, "config.json")
+                    if fallback_path != self.path:
+                        with open(fallback_path, "w", encoding="utf-8") as f:
+                            json.dump(self.config, f, indent=4)
+                        self.path = fallback_path
+                        return True
+            except Exception as e2:
+                print(f"Fallback config save failed: {e2}")
             return False
 
     def get_webapp_url(self):

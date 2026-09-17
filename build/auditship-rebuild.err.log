@@ -1,0 +1,299 @@
+120 INFO: PyInstaller: 6.18.0, contrib hooks: 2026.0
+122 INFO: Python: 3.11.9
+134 INFO: Platform: Windows-10-10.0.26200-SP0
+135 INFO: Python environment: C:\Users\Akash\AppData\Local\Programs\Python\Python311
+893 WARNING: collect_data_files - skipping data collection for module 'webview' as it is not a package.
+894 WARNING: collect_dynamic_libs - skipping library collection for module 'webview' as it is not a package.
+1076 WARNING: collect_data_files - skipping data collection for module 'pythonnet' as it is not a package.
+1078 WARNING: collect_dynamic_libs - skipping library collection for module 'pythonnet' as it is not a package.
+85 WARNING: Failed to collect submodules for 'oauth2client.contrib.django_util' because importing 'oauth2client.contrib.django_util' raised: ModuleNotFoundError: No module named 'django'
+4319 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Scripts\\pyinstaller.exe',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\python311.zip',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\DLLs',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\win32',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\win32\\lib',
+ 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pythonwin',
+ 'X:\\EFL_NEXUS']
+4645 INFO: Appending 'datas' from .spec
+4706 INFO: checking Analysis
+4706 INFO: Building Analysis because Analysis-00.toc is non existent
+4706 INFO: Looking for Python shared library...
+4706 INFO: Using Python shared library: C:\Users\Akash\AppData\Local\Programs\Python\Python311\python311.dll
+4706 INFO: Running Analysis Analysis-00.toc
+4706 INFO: Target bytecode optimization level: 0
+4706 INFO: Initializing module dependency graph...
+4707 INFO: Initializing module graph hook caches...
+4721 INFO: Analyzing modules for base_library.zip ...
+5524 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+5589 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+6664 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+7741 INFO: Caching module dependency graph...
+7769 INFO: Analyzing X:\EFL_NEXUS\main_app.py
+7889 INFO: Processing pre-find-module-path hook 'hook-tkinter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+7890 INFO: TclTkInfo: initializing cached Tcl/Tk info...
+8151 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+8179 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+8240 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+8503 INFO: Processing standard module hook 'hook-numpy.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+8922 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+9040 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+9191 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+9439 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+9979 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+10111 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+11015 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11017 INFO: SetuptoolsInfo: initializing cached setuptools info...
+12059 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+12342 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+12556 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+12853 INFO: Processing standard module hook 'hook-urllib3.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+12942 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+13420 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+13500 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14423 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+14644 INFO: Processing pre-safe-import-module hook 'hook-win32com.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\pre_safe_import_module'
+14724 INFO: Processing standard module hook 'hook-win32com.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14726 INFO: Processing standard module hook 'hook-pythoncom.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14801 INFO: Processing standard module hook 'hook-pywintypes.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15284 INFO: Processing standard module hook 'hook-openpyxl.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15433 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15713 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+17326 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+17448 INFO: Processing standard module hook 'hook-httplib2.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+17696 INFO: Processing standard module hook 'hook-jinja2.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+18217 INFO: Processing standard module hook 'hook-selenium.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19260 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+19468 INFO: Processing standard module hook 'hook-pandas.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+20796 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+20991 INFO: Processing standard module hook 'hook-scipy.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+21606 INFO: Processing standard module hook 'hook-pycparser.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+21782 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+21787 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+21787 INFO: Processing pre-find-module-path hook 'hook-distutils.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+22450 INFO: Processing standard module hook 'hook-distutils.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+22504 INFO: Processing standard module hook 'hook-distutils.util.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+22537 INFO: Processing standard module hook 'hook-_osx_support.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+22769 INFO: Processing standard module hook 'hook-pkg_resources.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+23729 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+24779 INFO: Processing standard module hook 'hook-torch.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+1539 WARNING: Failed to collect submodules for 'torch.utils.tensorboard' because importing 'torch.utils.tensorboard' raised: ModuleNotFoundError: No module named 'tensorboard'
+W0917 19:52:12.199000 420 site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\utils\hooks\__init__.py:665: DeprecationWarning: `torch.distributed._sharding_spec` will be deprecated, use `torch.distributed._shard.sharding_spec` instead
+  __import__(name)
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\utils\hooks\__init__.py:665: DeprecationWarning: `torch.distributed._sharded_tensor` will be deprecated, use `torch.distributed._shard.sharded_tensor` instead
+  __import__(name)
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\utils\hooks\__init__.py:665: DeprecationWarning: `torch.distributed._shard.checkpoint` will be deprecated, use `torch.distributed.checkpoint` instead
+  __import__(name)
+40481 INFO: hook-torch: this torch build does not depend on MKL...
+49565 INFO: Processing standard module hook 'hook-scipy.linalg.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+49648 INFO: Processing standard module hook 'hook-scipy.special._ufuncs.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+53568 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+60805 INFO: Processing standard module hook 'hook-fsspec.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+68541 INFO: Processing standard module hook 'hook-torchvision.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+68603 INFO: Processing standard module hook 'hook-torchvision.io.image.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+69693 INFO: Processing standard module hook 'hook-scipy.io.matlab.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+72117 INFO: Processing standard module hook 'hook-scipy.special._ellip_harm_2.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+74692 INFO: Processing standard module hook 'hook-scipy.spatial._ckdtree.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+75443 INFO: Processing standard module hook 'hook-scipy.spatial.transform.rotation.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+76846 INFO: Processing standard module hook 'hook-scipy.stats._stats.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+77385 INFO: Processing standard module hook 'hook-scipy.sparse.csgraph.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+80395 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+85987 INFO: Processing standard module hook 'hook-pandas.io.formats.style.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+88643 INFO: Processing standard module hook 'hook-pandas.plotting.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+89564 INFO: Processing standard module hook 'hook-dateutil.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+91300 INFO: Processing standard module hook 'hook-pandas.io.clipboard.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+92053 INFO: Analyzing hidden import 'patch_auditship_credentials'
+92153 INFO: Processing standard module hook 'hook-win32ctypes.core.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+93353 INFO: Analyzing hidden import 'updater'
+93364 INFO: Analyzing hidden import 'customtkinter'
+93380 INFO: Processing standard module hook 'hook-customtkinter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+94140 INFO: Analyzing hidden import 'webview.platforms.edgechromium'
+94141 ERROR: Hidden import 'webview.platforms.edgechromium' not found
+94141 INFO: Analyzing hidden import 'clr_loader'
+94142 ERROR: Hidden import 'clr_loader' not found
+94142 INFO: Analyzing hidden import 'pythonnet'
+94142 ERROR: Hidden import 'pythonnet' not found
+94143 INFO: Analyzing hidden import 'selenium.webdriver.chrome.options'
+94161 INFO: Analyzing hidden import 'selenium.webdriver.chrome.webdriver'
+94208 INFO: Analyzing hidden import 'selenium.webdriver.common.action_chains'
+94414 INFO: Analyzing hidden import 'selenium.webdriver.common.bidi.cdp'
+96103 INFO: Analyzing hidden import 'selenium.webdriver.common.bidi.console'
+96105 INFO: Analyzing hidden import 'selenium.webdriver.common.log'
+96116 INFO: Analyzing hidden import 'selenium.webdriver.common.window'
+96118 INFO: Analyzing hidden import 'selenium.webdriver.edge.options'
+96125 INFO: Analyzing hidden import 'selenium.webdriver.edge.service'
+96133 INFO: Analyzing hidden import 'selenium.webdriver.edge.webdriver'
+96135 INFO: Analyzing hidden import 'selenium.webdriver.firefox.firefox_profile'
+96152 INFO: Analyzing hidden import 'selenium.webdriver.firefox.options'
+96161 INFO: Analyzing hidden import 'selenium.webdriver.firefox.service'
+96170 INFO: Analyzing hidden import 'selenium.webdriver.firefox.webdriver'
+96174 INFO: Analyzing hidden import 'selenium.webdriver.ie'
+96181 INFO: Analyzing hidden import 'selenium.webdriver.ie.options'
+96191 INFO: Analyzing hidden import 'selenium.webdriver.ie.service'
+96198 INFO: Analyzing hidden import 'selenium.webdriver.ie.webdriver'
+96206 INFO: Analyzing hidden import 'selenium.webdriver.remote.server'
+96218 INFO: Analyzing hidden import 'selenium.webdriver.safari.options'
+96226 INFO: Analyzing hidden import 'selenium.webdriver.safari.permissions'
+96231 INFO: Analyzing hidden import 'selenium.webdriver.safari.service'
+96234 INFO: Analyzing hidden import 'selenium.webdriver.safari.webdriver'
+96243 INFO: Analyzing hidden import 'selenium.webdriver.support.abstract_event_listener'
+96251 INFO: Analyzing hidden import 'selenium.webdriver.support.color'
+96269 INFO: Analyzing hidden import 'selenium.webdriver.support.event_firing_webdriver'
+96281 INFO: Analyzing hidden import 'selenium.webdriver.support.events'
+96289 INFO: Analyzing hidden import 'selenium.webdriver.webkitgtk'
+96291 INFO: Analyzing hidden import 'selenium.webdriver.webkitgtk.options'
+96298 INFO: Analyzing hidden import 'selenium.webdriver.webkitgtk.service'
+96307 INFO: Analyzing hidden import 'selenium.webdriver.webkitgtk.webdriver'
+96314 INFO: Analyzing hidden import 'selenium.webdriver.wpewebkit'
+96316 INFO: Analyzing hidden import 'selenium.webdriver.wpewebkit.options'
+96325 INFO: Analyzing hidden import 'selenium.webdriver.wpewebkit.service'
+96332 INFO: Analyzing hidden import 'selenium.webdriver.wpewebkit.webdriver'
+96335 INFO: Analyzing hidden import 'webdriver_manager.drivers.edge'
+96342 INFO: Analyzing hidden import 'webdriver_manager.drivers.firefox'
+96351 INFO: Analyzing hidden import 'webdriver_manager.drivers.ie'
+96361 INFO: Analyzing hidden import 'webdriver_manager.drivers.opera'
+96370 INFO: Analyzing hidden import 'webdriver_manager.firefox'
+96379 INFO: Analyzing hidden import 'webdriver_manager.microsoft'
+96389 INFO: Analyzing hidden import 'webdriver_manager.opera'
+96397 INFO: Analyzing hidden import 'PIL.AvifImagePlugin'
+96415 INFO: Analyzing hidden import 'PIL.BdfFontFile'
+96432 INFO: Analyzing hidden import 'PIL.BlpImagePlugin'
+96452 INFO: Analyzing hidden import 'PIL.BufrStubImagePlugin'
+96458 INFO: Analyzing hidden import 'PIL.ContainerIO'
+96467 INFO: Analyzing hidden import 'PIL.CurImagePlugin'
+96474 INFO: Analyzing hidden import 'PIL.DcxImagePlugin'
+96490 INFO: Analyzing hidden import 'PIL.DdsImagePlugin'
+96509 INFO: Analyzing hidden import 'PIL.EpsImagePlugin'
+96523 INFO: Analyzing hidden import 'PIL.FitsImagePlugin'
+96533 INFO: Analyzing hidden import 'PIL.FliImagePlugin'
+96541 INFO: Analyzing hidden import 'PIL.FpxImagePlugin'
+96553 INFO: Analyzing hidden import 'PIL.FtexImagePlugin'
+96561 INFO: Analyzing hidden import 'PIL.GbrImagePlugin'
+96570 INFO: Analyzing hidden import 'PIL.GdImageFile'
+96578 INFO: Analyzing hidden import 'PIL.GribStubImagePlugin'
+96587 INFO: Analyzing hidden import 'PIL.Hdf5StubImagePlugin'
+96598 INFO: Analyzing hidden import 'PIL.IcnsImagePlugin'
+96737 INFO: Analyzing hidden import 'PIL.IcoImagePlugin'
+96752 INFO: Analyzing hidden import 'PIL.ImImagePlugin'
+96767 INFO: Analyzing hidden import 'PIL.ImageGrab'
+96780 INFO: Analyzing hidden import 'PIL.ImageMorph'
+96794 INFO: Analyzing hidden import 'PIL.ImageTransform'
+96802 INFO: Analyzing hidden import 'PIL.ImtImagePlugin'
+96806 INFO: Analyzing hidden import 'PIL.IptcImagePlugin'
+96818 INFO: Analyzing hidden import 'PIL.McIdasImagePlugin'
+96829 INFO: Analyzing hidden import 'PIL.MicImagePlugin'
+96837 INFO: Analyzing hidden import 'PIL.MpegImagePlugin'
+96845 INFO: Analyzing hidden import 'PIL.MspImagePlugin'
+96855 INFO: Analyzing hidden import 'PIL.PSDraw'
+96865 INFO: Analyzing hidden import 'PIL.PalmImagePlugin'
+96877 INFO: Analyzing hidden import 'PIL.PcdImagePlugin'
+96886 INFO: Analyzing hidden import 'PIL.PcfFontFile'
+96898 INFO: Analyzing hidden import 'PIL.PdfImagePlugin'
+96942 INFO: Analyzing hidden import 'PIL.PixarImagePlugin'
+96948 INFO: Analyzing hidden import 'PIL.PsdImagePlugin'
+96961 INFO: Analyzing hidden import 'PIL.QoiImagePlugin'
+96974 INFO: Analyzing hidden import 'PIL.SgiImagePlugin'
+96979 INFO: Analyzing hidden import 'PIL.SpiderImagePlugin'
+96996 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+96997 INFO: Analyzing hidden import 'PIL.SunImagePlugin'
+97006 INFO: Analyzing hidden import 'PIL.TarIO'
+97013 INFO: Analyzing hidden import 'PIL.TgaImagePlugin'
+97024 INFO: Analyzing hidden import 'PIL.WalImageFile'
+97035 INFO: Analyzing hidden import 'PIL.WebPImagePlugin'
+97050 INFO: Analyzing hidden import 'PIL.WmfImagePlugin'
+97065 INFO: Analyzing hidden import 'PIL.XVThumbImagePlugin'
+97073 INFO: Analyzing hidden import 'PIL.XbmImagePlugin'
+97082 INFO: Analyzing hidden import 'PIL.XpmImagePlugin'
+97091 INFO: Analyzing hidden import 'PIL.__main__'
+97098 INFO: Analyzing hidden import 'PIL._tkinter_finder'
+97103 INFO: Analyzing hidden import 'PIL.report'
+97105 INFO: Analyzing hidden import 'openpyxl.compat.abc'
+97106 INFO: Analyzing hidden import 'openpyxl.compat.product'
+97112 INFO: Analyzing hidden import 'openpyxl.compat.singleton'
+97115 INFO: Analyzing hidden import 'openpyxl.descriptors.slots'
+97122 INFO: Analyzing hidden import 'openpyxl.packaging.interface'
+97128 INFO: Analyzing hidden import 'openpyxl.utils.dataframe'
+97136 INFO: Analyzing hidden import 'openpyxl.utils.inference'
+97142 INFO: Analyzing hidden import 'openpyxl.worksheet.cell_watch'
+97149 INFO: Analyzing hidden import 'openpyxl.worksheet.controls'
+97167 INFO: Analyzing hidden import 'openpyxl.worksheet.custom'
+97174 INFO: Analyzing hidden import 'openpyxl.worksheet.errors'
+97182 INFO: Analyzing hidden import 'openpyxl.worksheet.picture'
+97187 INFO: Analyzing hidden import 'openpyxl.worksheet.smart_tag'
+97190 INFO: Analyzing hidden import 'oauth2client.contrib.devshell'
+97200 INFO: Analyzing hidden import 'oauth2client.contrib.dictionary_storage'
+97208 INFO: Analyzing hidden import 'oauth2client.contrib.flask_util'
+97223 INFO: Analyzing hidden import 'oauth2client.contrib.keyring_storage'
+97231 INFO: Analyzing hidden import 'oauth2client.contrib.multiprocess_file_storage'
+97243 INFO: Analyzing hidden import 'oauth2client.contrib.sqlalchemy'
+97252 INFO: Analyzing hidden import 'oauth2client.file'
+97260 INFO: Analyzing hidden import 'oauth2client.tools'
+97272 INFO: Processing module hooks (post-graph stage)...
+97283 WARNING: Hidden import "charset_normalizer.md__mypyc" not found!
+98925 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+98961 WARNING: Hidden import "pycparser.lextab" not found!
+98962 WARNING: Hidden import "pycparser.yacctab" not found!
+102281 INFO: Processing pre-safe-import-module hook 'hook-tensorflow.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\pre_safe_import_module'
+111321 WARNING: Hidden import "scipy.special._cdflib" not found!
+111391 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+111586 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+112782 INFO: Processing standard module hook 'hook-_tkinter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks'
+112783 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+112784 INFO: Processing standard module hook 'hook-tzdata.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+113572 INFO: Performing binary vs. data reclassification (2391 entries)
+118821 INFO: Looking for ctypes DLLs
+119045 WARNING: Library nvcuda.dll required via ctypes not found
+119134 WARNING: Ignoring /usr/lib64/libgomp.so.1 imported from C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\torch\_inductor\codecache.py - only basenames are supported with ctypes imports!
+119638 WARNING: Ignoring AppKit.framework/AppKit imported from C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\darkdetect\_mac_detect.py - only basenames are supported with ctypes imports!
+119846 INFO: Analyzing run-time hooks ...
+119869 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+119871 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+119873 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+119875 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+119876 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+119877 INFO: Including run-time hook 'pyi_rth_pkgres.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+119880 INFO: Including run-time hook 'pyi_rth_pythoncom.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+119881 INFO: Including run-time hook 'pyi_rth_pywintypes.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+119883 INFO: Including run-time hook 'pyi_rth__tkinter.py' from 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+120011 INFO: Creating base_library.zip...
+120032 INFO: Looking for dynamic libraries
+W0917 19:53:46.153000 12048 site-packages\torch\distributed\elastic\multiprocessing\redirects.py:29] NOTE: Redirects are currently not supported in Windows or MacOs.
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\building\build_main.py:227: DeprecationWarning: `torch.distributed._sharding_spec` will be deprecated, use `torch.distributed._shard.sharding_spec` instead
+  __import__(package)
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\building\build_main.py:227: DeprecationWarning: `torch.distributed._sharded_tensor` will be deprecated, use `torch.distributed._shard.sharded_tensor` instead
+  __import__(package)
+C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\building\build_main.py:227: DeprecationWarning: `torch.distributed._shard.checkpoint` will be deprecated, use `torch.distributed.checkpoint` instead
+  __import__(package)
+134586 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\numpy.libs', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\pandas.libs', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\scipy.libs', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torch\\lib', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torchvision', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torchvision', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torchvision', 'C:\\Users\\Akash\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\torchvision']
+134587 INFO: Extra DLL search directories (PATH): []
+140210 INFO: Warnings written to X:\EFL_NEXUS\build\EFL_NEXUS\warn-EFL_NEXUS.txt
+140699 INFO: Graph cross-reference written to X:\EFL_NEXUS\build\EFL_NEXUS\xref-EFL_NEXUS.html
+140904 INFO: checking PYZ
+140904 INFO: Building PYZ because PYZ-00.toc is non existent
+140904 INFO: Building PYZ (ZlibArchive) X:\EFL_NEXUS\build\EFL_NEXUS\PYZ-00.pyz
+144660 INFO: Building PYZ (ZlibArchive) X:\EFL_NEXUS\build\EFL_NEXUS\PYZ-00.pyz completed successfully.
+144743 INFO: checking PKG
+144743 INFO: Building PKG because PKG-00.toc is non existent
+144744 INFO: Building PKG (CArchive) EFL_NEXUS.pkg
+144831 INFO: Building PKG (CArchive) EFL_NEXUS.pkg completed successfully.
+144832 INFO: Bootloader C:\Users\Akash\AppData\Local\Programs\Python\Python311\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+144832 INFO: checking EXE
+144832 INFO: Building EXE because EXE-00.toc is non existent
+144832 INFO: Building EXE from EXE-00.toc
+144833 INFO: Copying bootloader EXE to X:\EFL_NEXUS\build\EFL_NEXUS\EFL_NEXUS.exe
+144906 INFO: Copying icon to EXE
+144940 INFO: Copying 0 resources to EXE
+144940 INFO: Embedding manifest in EXE
+144975 INFO: Appending PKG archive to EXE
+145053 INFO: Fixing EXE headers
+145493 INFO: Building EXE from EXE-00.toc completed successfully.
+145520 INFO: checking COLLECT
+145521 INFO: Building COLLECT because COLLECT-00.toc is non existent
+145521 INFO: Removing dir X:\EFL_NEXUS\dist\EFL_NEXUS
+146730 INFO: Building COLLECT COLLECT-00.toc
+158090 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+158160 INFO: Build complete! The results are available in: X:\EFL_NEXUS\dist

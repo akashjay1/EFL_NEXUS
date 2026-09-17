@@ -50,6 +50,14 @@ class AuditShipCredentialsTests(unittest.TestCase):
 
         self.assertEqual(namespace["login"](), ("settings-user", "settings-password"))
 
+    def test_auditship_executable_resolution(self):
+        import main_app
+        self.assertTrue(hasattr(main_app, "AUDITSHIP_RELATIVE_PATH"))
+        self.assertEqual(main_app.AUDITSHIP_RELATIVE_PATH, os.path.join("Korber_AuditShip", "KORBER AuditShip.exe"))
+        app = main_app.MainApp.__new__(main_app.MainApp)
+        exe = app._auditship_executable()
+        self.assertTrue(str(exe).endswith("KORBER AuditShip.exe"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -75,7 +75,7 @@ def get_credentials():
             with open(cfg_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 user = data.get("korber_user", "").strip()
-                pwd = data.get("korber_pass", "").strip()
+                pwd = data.get("korber_pass", "")
                 url = data.get("korber_url", "").strip()
         except Exception:
             pass
@@ -83,7 +83,7 @@ def get_credentials():
     if not user:
         user = os.environ.get("KORBER_USER", "").strip()
     if not pwd:
-        pwd = os.environ.get("KORBER_PASS", "").strip()
+        pwd = os.environ.get("KORBER_PASS", "")
     if not url:
         url = os.environ.get("KORBER_URL", "").strip() or "https://lopwaprodweb.koerbercloud.com/core/Default.html"
 
@@ -104,7 +104,7 @@ def save_credentials(username, password, url=None):
             data = {}
 
     data["korber_user"] = str(username).strip()
-    data["korber_pass"] = str(password).strip()
+    data["korber_pass"] = str(password)
     if url:
         data["korber_url"] = str(url).strip()
     elif "korber_url" not in data:

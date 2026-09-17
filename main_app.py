@@ -24,6 +24,7 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
+from kpi_profile import load_saved_profile, validate_profile
 
 try:
     from outlook_email_gui import ConfigStore, CONFIG_JSON_PATH
@@ -71,15 +72,13 @@ NAV_ITEMS = [
     ("tool1", "🔧", "Korber Automation"),
     ("tool2", "⚡", "Load Reconciliation"),
     ("tool3", "📧", "Outlook Email Sender"),
-<<<<<<< Updated upstream
-    ("tool4", "👥", "User Data Manager"),
-=======
     ("tool4", "👥", "User KPI"),
     ("tool5", "🚚", "Korber AuditShip"),
     ("tool6", "🔗", "Website Data Grabber"),
->>>>>>> Stashed changes
     ("settings", "⚙", "Settings"),
 ]
+
+AUDITSHIP_RELATIVE_PATH = os.path.join("Korber_AuditShip", "KORBER AuditShip.exe")
 
 
 def get_resource_path(relative_path):
@@ -383,8 +382,6 @@ class MainApp:
         self.tool2_app = None
         self.tool3_app = None
         self.tool4_app = None
-<<<<<<< Updated upstream
-=======
         self.tool5_process = None
         self.tool5_ready = False
         self.tool5_launch_button = None
@@ -393,16 +390,12 @@ class MainApp:
         self.tool5_hwnd = None
         self.tool5_watchdog_running = False
         self.tool6_app = None
->>>>>>> Stashed changes
         self.tool1_error = None
         self.tool2_error = None
         self.tool3_error = None
         self.tool4_error = None
-<<<<<<< Updated upstream
-=======
         self.tool5_error = None
         self.tool6_error = None
->>>>>>> Stashed changes
 
         self.sidebar_collapsed = False
         self.active_page = None
@@ -428,7 +421,7 @@ class MainApp:
         # Warm up heavy tool modules in the background right after startup
         self.root.after(150, self._start_background_warmup)
 
-        # Pre-instantiate Tool 4 in idle time so opening User Data Manager is instant without stutter
+        # Pre-instantiate Tool 4 in idle time so opening User KPI is instant without stutter
         self.root.after(600, self._prewarm_tool4)
 
         # Silent update check 2 seconds after startup
@@ -584,19 +577,11 @@ class MainApp:
     # ------------------------------------------------------------------
     def _start_background_warmup(self):
         def _warmup():
-            for mod in ("requests", "korber_tool", "reconciliation_tool", "outlook_email_gui", "efldatamanager"):
+            for mod in ("requests", "korber_tool", "reconciliation_tool", "outlook_email_gui", "KPI"):
                 try:
                     __import__(mod)
                 except Exception:
                     pass
-
-            # Pre-warm efldatamanager data in background thread
-            try:
-                import efldatamanager
-                if hasattr(efldatamanager, "preload_data"):
-                    efldatamanager.preload_data()
-            except Exception:
-                pass
 
             # Automatically update local and remote records to date order on startup
             try:
@@ -928,8 +913,6 @@ class MainApp:
         self.active_page = key
         self._refresh_nav_highlight()
 
-<<<<<<< Updated upstream
-=======
         # A foreign child HWND needs an explicit hide when another stacked Tk
         # page is selected; Tk's tkraise alone cannot manage its visibility.
         if key != "tool5":
@@ -970,7 +953,6 @@ class MainApp:
     # Deferred Tool Loader (runs behind the spinner overlay)
     # ------------------------------------------------------------------
     def _deferred_tool_load(self, key):
->>>>>>> Stashed changes
         if key == "tool1":
             self._ensure_tool1()
         elif key == "tool2":
@@ -979,10 +961,6 @@ class MainApp:
             self._ensure_tool3()
         elif key == "tool4":
             self._ensure_tool4()
-<<<<<<< Updated upstream
-
-        self.pages[key].tkraise()
-=======
         elif key == "tool5":
             self._ensure_tool5()
             return  # tool5 manages its own overlay
@@ -1094,7 +1072,6 @@ class MainApp:
             except Exception:
                 pass
             self._loading_overlay = None
->>>>>>> Stashed changes
 
     # ------------------------------------------------------------------
     # Dashboard Page with Aurora Canvas & Frosted Cards
@@ -1200,22 +1177,37 @@ class MainApp:
             side_pad=(0, 12)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 4: User Data Manager
+        # Card 4: User KPI
         self._make_aurora_card(
             parent=cards_row,
             icon="👥",
             badge="TASK & METRIC LOGS",
             badge_color=AURORA_AMBER,
             accent_color=AURORA_AMBER,
-            title="User Data Manager",
+            title="User KPI",
             desc="Operator task logging, job record management, Google Sheets live sync, and daily KPI tracking.",
             page_key="tool4",
             side_pad=(0, 0)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 6: Website Data Grabber
+        # Row 2 cards
         cards_row_two = tk.Frame(wrap, bg=BASE_BG)
         cards_row_two.pack(fill="x", pady=(0, 8))
+
+        # Card 5: Korber AuditShip
+        self._make_aurora_card(
+            parent=cards_row_two,
+            icon="🚚",
+            badge="SHIPPING & AUDIT",
+            badge_color=AURORA_CYAN,
+            accent_color=AURORA_CYAN,
+            title="Korber AuditShip",
+            desc="Audit outbound loads and complete shipping workflows through the Korber One Mobile portal.",
+            page_key="tool5",
+            side_pad=(0, 12)
+        ).pack(side="left", fill="both", expand=True)
+
+        # Card 6: Website Data Grabber
         self._make_aurora_card(
             parent=cards_row_two,
             icon="🔗",
@@ -1448,22 +1440,22 @@ class MainApp:
         if self.tool4_app is not None or self.tool4_error is not None:
             return
         try:
-            import efldatamanager
+            import KPI
         except Exception:
             self.tool4_error = traceback.format_exc()
-            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
+            self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
             return
 
         try:
-            self.tool4_app = efldatamanager.EFLApp(
-                self.root, container=page, standalone=False
+            page.configure(bg=KPI.BG_DARK)
+            self.tool4_app = KPI.EFLApp(
+                self.root, container=page, standalone=False,
+                profile=load_saved_profile(self.config_store.path if self.config_store else None),
+                on_open_settings=lambda: self.show_page("settings"),
             )
         except Exception:
             self.tool4_error = traceback.format_exc()
             self.tool4_app = None
-<<<<<<< Updated upstream
-            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
-=======
             self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
 
     def _ensure_tool6(self):
@@ -1475,11 +1467,41 @@ class MainApp:
             self.tool6_app = website_data_grabber.WebsiteDataGrabberApp(
                 self.root, container=page, standalone=False, config_store=self.config_store,
                 on_open_settings=lambda: self.show_page("settings"),
+                on_job_started=self._prefill_kpi_for_job,
             )
         except Exception:
             self.tool6_error = traceback.format_exc()
             self.tool6_app = None
             self._show_tool_error(page, "Tool 6: Website Data Grabber", self.tool6_error)
+
+    def _prefill_kpi_for_job(self, job_id: str) -> None:
+        """Called when Tool 6 starts a job — route prefix to the correct KPI section,
+        prefill the Job ID entry in User KPI, and navigate there automatically.
+
+        Routing:
+          OUT_* → 'GDN Reconciliation:'
+          IN_*  → 'GRN Reconciliation:'
+          Other → no-op (job still starts, no KPI prefill)
+        """
+        upper = job_id.upper()
+        if upper.startswith("OUT_"):
+            section = "GDN Reconciliation:"
+        elif upper.startswith("IN_"):
+            section = "GRN Reconciliation:"
+        else:
+            return  # Unknown prefix — do not prefill
+
+        def _do_prefill():
+            # Ensure Tool 4 (User KPI) is instantiated before touching it
+            self._ensure_tool4()
+            if self.tool4_app is None:
+                return
+            ok = self.tool4_app.prefill_reconciliation_job(job_id, section)
+            if ok:
+                self.show_page("tool4")
+
+        # Always run UI mutations on the Tk main thread
+        self.root.after(0, _do_prefill)
 
     def _ensure_tool5(self):
         """Build a launcher page for AuditShip — process starts only when the user clicks the button."""
@@ -1594,6 +1616,16 @@ class MainApp:
             # AuditShip is a separate PyInstaller application. This prevents it
             # from inheriting EFL NEXUS's frozen-runtime state.
             child_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            if self.config_store:
+                as_user = self.config_store.get_auditship_user()
+                as_pass = self.config_store.get_auditship_pass()
+                as_fork = self.config_store.get_auditship_fork_id()
+                if as_user:
+                    child_env["AUDITSHIP_USER"] = as_user
+                if as_pass:
+                    child_env["AUDITSHIP_PASS"] = as_pass
+                if as_fork:
+                    child_env["AUDITSHIP_FORK_ID"] = as_fork
             startup_info = subprocess.STARTUPINFO()
             startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startup_info.wShowWindow = 0  # SW_HIDE until attached to the host
@@ -2149,7 +2181,6 @@ class MainApp:
                 pass
         self.tool5_overlay = None
         self.tool5_launch_button = None
->>>>>>> Stashed changes
 
     def _show_tool_error(self, page, tool_name, error_text):
         for w in page.winfo_children():
@@ -2243,6 +2274,42 @@ class MainApp:
         check_btn.bind("<Button-1>", lambda e: self.check_for_updates(silent=False))
         check_btn.bind("<Enter>", lambda e: check_btn.config(bg=AURORA_CYAN, fg="#0b1420"))
         check_btn.bind("<Leave>", lambda e: check_btn.config(bg="#0d1b2a", fg="#ffffff"))
+
+        # KPI identity is local to this installation and controls Tool 4.
+        kpi_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
+        kpi_card.pack(fill="x", pady=(0, 20))
+        kpi_top = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_top.pack(fill="x", pady=(0, 8))
+        tk.Label(kpi_top, text="KPI USER PROFILE", bg="#ffffff", fg="#64748b",
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+        configured_profile = load_saved_profile(self.config_store.path if self.config_store else None)
+        self.kpi_status_pill = tk.Label(
+            kpi_top, text="● Configured" if configured_profile else "● Needs Setup",
+            bg="#0d1b2a", fg=AURORA_MINT if configured_profile else "#f59e0b",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=2,
+        )
+        self.kpi_status_pill.pack(side="right")
+        tk.Label(kpi_card, text="Use your registered User ID and individual User Code for KPI entry and exports.",
+                 bg="#ffffff", fg="#64748b", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 14))
+        kpi_fields = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_fields.pack(fill="x", pady=(0, 14))
+        kpi_fields.columnconfigure(1, weight=1)
+        for row, (label, key) in enumerate((("User ID:", "kpi_user_id"), ("User Code:", "kpi_user_code"))):
+            tk.Label(kpi_fields, text=label, bg="#ffffff", fg="#0f172a",
+                     font=("Segoe UI", 9, "bold"), width=16, anchor="w").grid(
+                         row=row, column=0, sticky="w", padx=(0, 12), pady=(0, 8))
+            entry = ttk.Entry(kpi_fields, font=("Segoe UI", 9))
+            entry.insert(0, self.config_store.config.get(key, "") if self.config_store else "")
+            entry.grid(row=row, column=1, sticky="ew", pady=(0, 8))
+            setattr(self, f"{key}_entry", entry)
+        kpi_actions = tk.Frame(kpi_card, bg="#ffffff")
+        kpi_actions.pack(fill="x")
+        tk.Button(kpi_actions, text="Save KPI Profile", bg="#0d1b2a", fg="#ffffff",
+                  font=("Segoe UI", 9, "bold"), padx=16, pady=8,
+                  relief="flat", cursor="hand2", command=self._save_kpi_profile).pack(side="left")
+        self.kpi_msg_lbl = tk.Label(kpi_actions, text="", bg="#ffffff", fg=AURORA_MINT,
+                                    font=("Segoe UI", 9, "bold"))
+        self.kpi_msg_lbl.pack(side="left", padx=(14, 0))
 
         # --- Körber Cloud Authentication Card ---
         korber_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
@@ -2339,8 +2406,6 @@ class MainApp:
         )
         self.korber_msg_lbl.pack(side="left", padx=(14, 0))
 
-<<<<<<< Updated upstream
-=======
         # --- AuditShip credentials (separate from Körber Cloud automation) ---
         auditship_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         auditship_card.pack(fill="x", pady=(0, 20))
@@ -2483,7 +2548,6 @@ class MainApp:
         self.grabber_msg_lbl = tk.Label(grabber_actions, text="", bg="#ffffff", fg=AURORA_MINT, font=("Segoe UI", 9, "bold"))
         self.grabber_msg_lbl.pack(side="left", padx=(14, 0))
 
->>>>>>> Stashed changes
         # --- Google Sheets & Web App Integration Card ---
         gsheet_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         gsheet_card.pack(fill="x", pady=(0, 20))
@@ -2676,8 +2740,33 @@ class MainApp:
             self.korber_msg_lbl.config(text="✓ Credentials saved successfully!", fg=AURORA_MINT)
             self.root.after(3500, lambda: self.korber_msg_lbl.config(text="") if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists() else None)
 
-<<<<<<< Updated upstream
-=======
+    def _save_kpi_profile(self):
+        try:
+            user_id, user_code = validate_profile(
+                self.kpi_user_id_entry.get(), self.kpi_user_code_entry.get()
+            )
+        except ValueError as error:
+            self.kpi_msg_lbl.config(text=str(error), fg="#dc2626")
+            return False
+
+        if not self.config_store:
+            self.kpi_msg_lbl.config(text="Settings store unavailable.", fg="#dc2626")
+            return False
+
+        old_config = self.config_store.config.copy()
+        if not self.config_store.save(kpi_user_id=user_id, kpi_user_code=user_code):
+            self.config_store.config = old_config
+            self.kpi_msg_lbl.config(text="Could not save KPI profile. Check file access.", fg="#dc2626")
+            return False
+
+        self.kpi_user_id_entry.delete(0, "end")
+        self.kpi_user_id_entry.insert(0, user_id)
+        self.kpi_status_pill.config(text="● Configured", fg=AURORA_MINT)
+        self.kpi_msg_lbl.config(text="KPI profile saved.", fg=AURORA_MINT)
+        if self.tool4_app is not None:
+            self.tool4_app.set_profile((user_id, user_code))
+        return True
+
     def _toggle_auditship_password_visibility(self):
         if self.auditship_pass_entry.cget("show"):
             self.auditship_pass_entry.config(show="")
@@ -2726,15 +2815,43 @@ class MainApp:
         try:
             from website_data_grabber import _save_password
             _save_password(password, username)
-            if not self.config_store or not self.config_store.save(
-                data_grabber_login_url=login_url,
-                data_grabber_user=username,
-                data_grabber_reconciliation_url=reconciliation_url,
-            ):
-                raise RuntimeError("Could not save Tool 6 connection settings.")
         except Exception as exc:
-            messagebox.showerror("Save Failed", f"Tool 6 credentials could not be saved: {exc}")
+            messagebox.showerror("Save Failed", f"Tool 6 credentials could not be saved in Windows Credential Manager: {exc}")
             return
+
+        saved_config = False
+        if self.config_store:
+            try:
+                saved_config = bool(self.config_store.save(
+                    data_grabber_login_url=login_url,
+                    data_grabber_user=username,
+                    data_grabber_reconciliation_url=reconciliation_url,
+                ))
+            except Exception:
+                saved_config = False
+
+        if not saved_config:
+            try:
+                from outlook_email_gui import CONFIG_JSON_PATH
+                cfg_path = Path(CONFIG_JSON_PATH)
+            except Exception:
+                cfg_path = Path(__file__).resolve().parent / "config.json"
+            try:
+                cfg_path.parent.mkdir(parents=True, exist_ok=True)
+                data = {}
+                if cfg_path.exists():
+                    try:
+                        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = {}
+                data["data_grabber_login_url"] = login_url
+                data["data_grabber_user"] = username
+                data["data_grabber_reconciliation_url"] = reconciliation_url
+                cfg_path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+                saved_config = True
+            except Exception as exc:
+                print(f"[MainApp] Warning: Could not save Tool 6 connection settings to config.json: {exc}")
+
         self.grabber_status_pill.config(text="● Configured", fg=AURORA_MINT)
         self.grabber_msg_lbl.config(text="✓ Tool 6 settings saved securely!", fg=AURORA_MINT)
         if self.tool6_app is not None:
@@ -2761,7 +2878,6 @@ class MainApp:
                 self.grabber_login_url_entry.get().strip(), "", "", self.grabber_reconciliation_url_entry.get().strip()
             )
 
->>>>>>> Stashed changes
     def _save_gsheet_settings(self):
         webapp_url = self.webapp_entry.get().strip()
         sheet_url = self.sheet_entry.get().strip()
@@ -2841,11 +2957,20 @@ class MainApp:
                 pass
         if self.tool4_app is not None:
             try:
-                self.tool4_app.close_popup_safely()
-                self.tool4_app.cancel_all_timers()
+                self.tool4_app.close()
+            except Exception:
+                pass
+        if self.tool5_process is not None and self.tool5_process.poll() is None:
+            try:
+                self.tool5_process.terminate()
             except Exception:
                 pass
         if self.tool6_app is not None:
+            if hasattr(self.tool6_app, "close_browser"):
+                try:
+                    self.tool6_app.close_browser()
+                except Exception:
+                    pass
             browser_process = getattr(self.tool6_app, "browser_process", None)
             if browser_process is not None and browser_process.poll() is None:
                 try:
@@ -2857,8 +2982,8 @@ class MainApp:
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "--internal-browser":
-        from website_data_grabber import run_internal_browser
-        run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else None)
+        from website_data_grabber import run_internal_browser, DEFAULT_LOGIN_URL
+        run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LOGIN_URL)
         raise SystemExit(0)
     try:
         import ctypes

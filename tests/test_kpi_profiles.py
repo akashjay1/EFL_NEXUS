@@ -67,6 +67,26 @@ class KPIProfileTests(unittest.TestCase):
         app.tool4_app.set_profile.assert_not_called()
         self.assertEqual(app.config_store.config["kpi_user_id"], "Akash")
 
+    def test_ensure_tool4_instantiates_kpi_app(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as error:
+            self.skipTest(f"Tk unavailable: {error}")
+        self.addCleanup(root.destroy)
+        root.withdraw()
+        page = tk.Frame(root)
+        app = main_app.MainApp.__new__(main_app.MainApp)
+        app.root = root
+        app.pages = {"tool4": page, "settings": tk.Frame(root)}
+        app.tool4_app = None
+        app.tool4_error = None
+        app.config_store = ConfigStore(str(self.config_path))
+        with patch.object(KPI.EFLApp, "_init_google_sheets_async"):
+            app._ensure_tool4()
+        self.assertIsNone(app.tool4_error)
+        self.assertIsInstance(app.tool4_app, KPI.EFLApp)
+        app.tool4_app.close()
+
     def test_tool_is_gated_until_profile_is_saved_and_switches_live(self):
         try:
             root = tk.Tk()
@@ -230,6 +250,67 @@ class KPIUserDataTests(unittest.TestCase):
             root.destroy()
 
 
+class KPIPrefillTests(unittest.TestCase):
+    """Tests for EFLApp.prefill_reconciliation_job."""
+
+    def _make_app(self):
+        """Return a bare EFLApp with rows_top stubs."""
+        app = KPI.EFLApp.__new__(KPI.EFLApp)
+        app.user_id = "Tharindu"
+        app.user_code = "C-22"
+        app._is_past_date = False
+        app.root = Mock()
+
+        # Stub a PlaceholderEntry-like mock with the attrs the method touches
+        def make_entry():
+            e = Mock()
+            e._has_placeholder = True
+            e.default_fg = "#0f172a"
+            return e
+
+        def make_combo():
+            return Mock()
+
+        app.rows_top = {
+            "GDN Reconciliation:": {"entry": make_entry(), "combo": make_combo()},
+            "GRN Reconciliation:": {"entry": make_entry(), "combo": make_combo()},
+        }
+        app.add_activity_log = Mock()
+        return app
+
+    def test_prefill_gdn_sets_entry_and_resets_combo(self):
+        app = self._make_app()
+        result = app.prefill_reconciliation_job("OUT_0000007024", "GDN Reconciliation:")
+        self.assertTrue(result)
+        entry = app.rows_top["GDN Reconciliation:"]["entry"]
+        self.assertFalse(entry._has_placeholder)
+        entry.delete.assert_called_once_with(0, "end")
+        entry.insert.assert_called_once_with(0, "OUT_0000007024")
+        entry.config.assert_called_once_with(fg=entry.default_fg)
+        app.rows_top["GDN Reconciliation:"]["combo"].reset.assert_called_once()
+
+    def test_prefill_grn_sets_entry_and_resets_combo(self):
+        app = self._make_app()
+        result = app.prefill_reconciliation_job("IN_0000001234", "GRN Reconciliation:")
+        self.assertTrue(result)
+        entry = app.rows_top["GRN Reconciliation:"]["entry"]
+        self.assertFalse(entry._has_placeholder)
+        entry.insert.assert_called_once_with(0, "IN_0000001234")
+        app.rows_top["GRN Reconciliation:"]["combo"].reset.assert_called_once()
+
+    def test_prefill_unknown_section_returns_false(self):
+        app = self._make_app()
+        result = app.prefill_reconciliation_job("OUT_0000007024", "Load Plan or Asn:")
+        self.assertFalse(result)
+
+    def test_prefill_logs_activity(self):
+        app = self._make_app()
+        app.prefill_reconciliation_job("OUT_0000007024", "GDN Reconciliation:")
+        app.add_activity_log.assert_called_once()
+        args = app.add_activity_log.call_args.args
+        self.assertIn("OUT_0000007024", args[1])
+        self.assertIn("GDN Reconciliation", args[1])
+
+
 if __name__ == "__main__":
     unittest.main()
-
