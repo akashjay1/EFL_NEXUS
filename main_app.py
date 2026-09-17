@@ -6,7 +6,7 @@ RUN:
     python main_app.py
 
 Requires korber_tool.py, reconciliation_tool.py, outlook_email_gui.py,
-the bundled Korber_AuditShip application, Pillow, and numpy.
+Pillow, and numpy.
 """
 
 import os
@@ -24,15 +24,10 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageTk
-from kpi_profile import load_saved_profile, validate_profile
 
-# outlook_email_gui is imported lazily on first use to avoid blocking startup.
-# ConfigStore / CONFIG_JSON_PATH are resolved at the end of this block.
-_outlook_import_error = None
 try:
     from outlook_email_gui import ConfigStore, CONFIG_JSON_PATH
-except Exception as _e:
-    _outlook_import_error = _e
+except Exception:
     ConfigStore = None
     CONFIG_JSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -76,12 +71,15 @@ NAV_ITEMS = [
     ("tool1", "🔧", "Korber Automation"),
     ("tool2", "⚡", "Load Reconciliation"),
     ("tool3", "📧", "Outlook Email Sender"),
+<<<<<<< Updated upstream
+    ("tool4", "👥", "User Data Manager"),
+=======
     ("tool4", "👥", "User KPI"),
     ("tool5", "🚚", "Korber AuditShip"),
+    ("tool6", "🔗", "Website Data Grabber"),
+>>>>>>> Stashed changes
     ("settings", "⚙", "Settings"),
 ]
-
-AUDITSHIP_RELATIVE_PATH = os.path.join("Korber_AuditShip", "KORBER AuditShip.exe")
 
 
 def get_resource_path(relative_path):
@@ -363,11 +361,11 @@ class MainApp:
         # Configure modern TTK styles
         self._setup_ttk_styles()
 
-        # Sidebar logo — placeholder until loaded asynchronously
-        self.sidebar_logo = None
+        # Load icon_2 for sidebar branding
+        self.sidebar_logo = self._load_header_icon(size=(24, 24))
 
-        # Aurora background — None until loaded asynchronously
-        self.aurora_base_image = None
+        # Load / Ensure Aurora Background Image
+        self.aurora_base_image = self._load_aurora_image()
         self.bg_photo = None
         self._resize_timer = None
 
@@ -385,6 +383,8 @@ class MainApp:
         self.tool2_app = None
         self.tool3_app = None
         self.tool4_app = None
+<<<<<<< Updated upstream
+=======
         self.tool5_process = None
         self.tool5_ready = False
         self.tool5_launch_button = None
@@ -392,19 +392,30 @@ class MainApp:
         self.tool5_overlay = None
         self.tool5_hwnd = None
         self.tool5_watchdog_running = False
+        self.tool6_app = None
+>>>>>>> Stashed changes
         self.tool1_error = None
         self.tool2_error = None
         self.tool3_error = None
         self.tool4_error = None
+<<<<<<< Updated upstream
+=======
         self.tool5_error = None
+        self.tool6_error = None
+>>>>>>> Stashed changes
 
         self.sidebar_collapsed = False
         self.active_page = None
         self.nav_buttons = {}  # key -> {"row":..., "accent":..., "label":...}
 
         self.config_store = ConfigStore(CONFIG_JSON_PATH)
+        try:
+            if ConfigStore is not None:
+                from outlook_email_gui import SentLogStore
+                SentLogStore(self.config_store).sort_local_records()
+        except Exception:
+            pass
 
-        # Build and show UI immediately — no blocking I/O before this point
         self._build_layout()
         self._build_sidebar()
         self._build_pages()
@@ -414,15 +425,14 @@ class MainApp:
         # Start non-blocking network monitor loop
         threading.Thread(target=self._network_monitor_worker, daemon=True).start()
 
-        # Load heavy assets and warm up tool modules in background threads
-        # so they don't delay the first frame appearing.
-        threading.Thread(target=self._load_assets_async, daemon=True).start()
-        self.root.after(100, self._start_background_warmup)
+        # Warm up heavy tool modules in the background right after startup
+        self.root.after(150, self._start_background_warmup)
 
-        # Tool 4 loads lazily on first click — module is pre-imported by warmup thread
+        # Pre-instantiate Tool 4 in idle time so opening User Data Manager is instant without stutter
+        self.root.after(600, self._prewarm_tool4)
 
-        # Silent update check 3 seconds after startup
-        self.root.after(3000, lambda: self.check_for_updates(silent=True))
+        # Silent update check 2 seconds after startup
+        self.root.after(2000, lambda: self.check_for_updates(silent=True))
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
@@ -483,66 +493,8 @@ class MainApp:
             font=("Segoe UI", 10, "bold")
         )
 
-    def _load_assets_async(self):
-        """Load heavy image assets in a background thread, then push results
-        back to the main thread via root.after so Tkinter stays thread-safe."""
-        # --- Header icon ---
-        logo = None
-        for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
-            icon_path = get_resource_path(icon_name)
-            if os.path.exists(icon_path):
-                try:
-                    import warnings as _w
-                    with _w.catch_warnings():
-                        _w.simplefilter("ignore")
-                        img = Image.open(icon_path).convert("RGBA")
-                        logo = img.resize((24, 24), Image.Resampling.LANCZOS)
-                        break
-                except Exception:
-                    pass
-
-        # --- Aurora background ---
-        aurora = None
-        asset_path = get_resource_path(os.path.join("assets", "aurora_bg.png"))
-        if not os.path.exists(asset_path):
-            alt_path = get_resource_path("aurora_bg.png")
-            if os.path.exists(alt_path):
-                asset_path = alt_path
-            else:
-                try:
-                    import generate_aurora_asset
-                    aurora = generate_aurora_asset.generate_aurora_image(1920, 1200, asset_path)
-                except Exception:
-                    pass
-        if aurora is None:
-            try:
-                aurora = Image.open(asset_path)
-            except Exception:
-                aurora = Image.new("RGB", (1920, 1200), (250, 248, 242))
-
-        # Push results to the main thread
-        def _apply_assets():
-            try:
-                if logo is not None:
-                    self.sidebar_logo = ImageTk.PhotoImage(logo)
-                    self._build_sidebar()  # Redraw sidebar with logo now available
-            except Exception:
-                pass
-            try:
-                self.aurora_base_image = aurora
-                # Trigger first aurora render if dashboard canvas already has a size
-                if self.dash_canvas.winfo_width() > 50:
-                    self._update_aurora_bg(
-                        self.dash_canvas.winfo_width(),
-                        self.dash_canvas.winfo_height()
-                    )
-            except Exception:
-                pass
-
-        self.root.after(0, _apply_assets)
-
     def _load_header_icon(self, size=(24, 24)):
-        """Kept for compatibility — synchronous path (not used on startup)."""
+        """Loads and resizes icon_2 for header bars."""
         for icon_name in ("icon_2.ico", "icon.ico", "favicon.ico"):
             icon_path = get_resource_path(icon_name)
             if os.path.exists(icon_path):
@@ -557,7 +509,7 @@ class MainApp:
         return None
 
     def _load_aurora_image(self):
-        """Kept for compatibility — synchronous path (not used on startup)."""
+        """Loads or automatically creates the Aurora Borealis background texture."""
         asset_path = get_resource_path(os.path.join("assets", "aurora_bg.png"))
         if not os.path.exists(asset_path):
             alt_path = get_resource_path("aurora_bg.png")
@@ -569,10 +521,12 @@ class MainApp:
                     return generate_aurora_asset.generate_aurora_image(1920, 1200, asset_path)
                 except Exception:
                     pass
+
         try:
             return Image.open(asset_path)
         except Exception:
-            return Image.new("RGB", (1920, 1200), (250, 248, 242))
+            fallback = Image.new("RGB", (1920, 1200), (250, 248, 242))
+            return fallback
 
     # ------------------------------------------------------------------
     # Network Connectivity Monitor
@@ -629,29 +583,32 @@ class MainApp:
     # Background Module Warmup
     # ------------------------------------------------------------------
     def _start_background_warmup(self):
-        """Import heavy tool modules sequentially in a dedicated daemon thread
-        to prevent GIL and import-lock contention during startup. Then run the
-        Excel sort and remote record sync in the background, never on the main thread."""
-
-        def _warmup_worker():
-            for mod in ("requests", "outlook_email_gui", "KPI", "reconciliation_tool"):
+        def _warmup():
+            for mod in ("requests", "korber_tool", "reconciliation_tool", "outlook_email_gui", "efldatamanager"):
                 try:
                     __import__(mod)
                 except Exception:
                     pass
 
-            # Sort local sent_log.xlsx and sync remote counts — both I/O-bound,
-            # safe to run in a daemon thread.
+            # Pre-warm efldatamanager data in background thread
+            try:
+                import efldatamanager
+                if hasattr(efldatamanager, "preload_data"):
+                    efldatamanager.preload_data()
+            except Exception:
+                pass
+
+            # Automatically update local and remote records to date order on startup
             try:
                 import outlook_email_gui
                 if hasattr(outlook_email_gui, 'SentLogStore'):
                     store = outlook_email_gui.SentLogStore(self.config_store)
                     store.sort_local_records()
-                    store.get_counts()  # Triggers Google Apps Script doGet
+                    store.get_counts()  # Triggers Google Apps Script doGet to sort records on sheet
             except Exception:
                 pass
 
-        threading.Thread(target=_warmup_worker, daemon=True).start()
+        threading.Thread(target=_warmup, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Update Checker Functions
@@ -685,25 +642,6 @@ class MainApp:
 
         return "1.0.0"
 
-    def get_current_build(self) -> int:
-        """Read the installed hotfix build number from build.txt in app_dir.
-
-        Returns 0 when build.txt is absent (fresh install or pre-hotfix release).
-        This number is compared against the highest build number found among
-        patch assets on the current GitHub Release.
-        """
-        if getattr(sys, 'frozen', False):
-            build_path = Path(sys.executable).parent / "build.txt"
-        else:
-            build_path = Path(__file__).resolve().parent / "build.txt"
-
-        if build_path.exists():
-            try:
-                return int(build_path.read_text(encoding="utf-8").strip())
-            except (ValueError, OSError):
-                pass
-        return 0
-
     def check_for_updates(self, silent=False):
         if not self.is_online:
             if not silent:
@@ -720,11 +658,9 @@ class MainApp:
         ).start()
 
     def _check_for_updates_worker(self, silent=False):
-        import re as _re
         import requests
         api_url = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
         current_version = self.get_current_version()
-        current_build   = self.get_current_build()
 
         try:
             headers = {"User-Agent": "EFL-Nexus-Updater"}
@@ -734,128 +670,43 @@ class MainApp:
 
             latest_version = data.get("tag_name", "").strip().lstrip("v")
 
-            # ---------------------------------------------------------------
-            # Pass 1 — collect assets, categorised by type:
-            #   * hotfix_patches : Patch_v<current_ver>_b<N>.zip  (same version)
-            #   * upgrade_patch  : Patch_v<latest_ver>_b*.zip     (newer version)
-            #   * full_zip       : first non-patch .zip            (full fallback)
-            # ---------------------------------------------------------------
-            # Regex that matches patch assets for a SPECIFIC version:
-            #   EFL_Nexus_Patch_v1.0.5_b3.zip
-            hotfix_pat = _re.compile(
-                r"EFL_Nexus_Patch_v"
-                + _re.escape(current_version)
-                + r"_b(\d+)\.zip$",
-                _re.IGNORECASE,
-            )
-            upgrade_patch_pat = _re.compile(
-                r"EFL_Nexus_Patch_v[\d.]+_b(\d+)\.zip$",
-                _re.IGNORECASE,
-            )
-
-            hotfix_patches = []   # list of (build_int, url, size)
-            upgrade_patch_url  = None
-            upgrade_patch_size = 0
-            full_url  = None
-            full_size = 0
-
+            download_url = None
             for asset in data.get("assets", []):
-                name = asset.get("name", "")
-                url  = asset.get("browser_download_url", "")
-                size = asset.get("size", 0)
-                if not name.lower().endswith(".zip"):
-                    continue
+                if asset.get("name", "").endswith(".zip"):
+                    download_url = asset.get("browser_download_url")
+                    break
 
-                hm = hotfix_pat.match(name)
-                if hm:
-                    hotfix_patches.append((int(hm.group(1)), url, size))
-                    continue
-
-                if upgrade_patch_pat.match(name):
-                    if upgrade_patch_url is None:  # take first upgrade patch
-                        upgrade_patch_url  = url
-                        upgrade_patch_size = size
-                    continue
-
-                # Plain non-patch ZIP — treat as full-release fallback
-                if full_url is None:
-                    full_url  = url
-                    full_size = size
-
-            # ---------------------------------------------------------------
-            # Pass 2a — Version upgrade check (existing behaviour)
-            # ---------------------------------------------------------------
-            try:
-                from packaging.version import Version
-                is_newer_version = Version(latest_version) > Version(current_version)
-            except Exception:
-                try:
-                    is_newer_version = (
-                        tuple(map(int, latest_version.split('.'))) >
-                        tuple(map(int, current_version.split('.')))
-                    )
-                except Exception:
-                    is_newer_version = latest_version > current_version
-
-            if is_newer_version:
-                # Prefer upgrade patch ZIP over full ZIP for version upgrades
-                is_patch      = upgrade_patch_url is not None
-                download_url  = upgrade_patch_url  if is_patch else full_url
-                download_size = upgrade_patch_size if is_patch else full_size
-
-                if download_url:
-                    self.root.after(
-                        0,
-                        lambda lv=latest_version, cv=current_version,
-                               du=download_url, ip=is_patch, ds=download_size:
-                            self._prompt_update(lv, cv, du, ip, ds,
-                                                is_hotfix=False)
-                    )
-                elif not silent:
+            if not download_url:
+                if not silent:
                     self.root.after(
                         0,
                         lambda: messagebox.showerror(
-                            "Update Error",
-                            "No .zip asset found in the latest GitHub release."
+                            "Update Error", "No .zip asset found in the latest GitHub release."
                         )
                     )
-                return  # version upgrade takes priority; skip hotfix check
+                return
 
-            # ---------------------------------------------------------------
-            # Pass 2b — Same-version hotfix check
-            # Only runs when the release version == current installed version.
-            # ---------------------------------------------------------------
-            if hotfix_patches:
-                # Pick the highest build number available on the release
-                hotfix_patches.sort(key=lambda t: t[0], reverse=True)
-                best_build, best_url, best_size = hotfix_patches[0]
+            def parse_ver(v):
+                return tuple(map(int, v.split('.')))
 
-                if best_build > current_build:
-                    self.root.after(
-                        0,
-                        lambda cv=current_version, cb=current_build,
-                               bb=best_build, du=best_url, ds=best_size:
-                            self._prompt_update(
-                                cv, cv, du,
-                                is_patch=True,
-                                download_size=ds,
-                                is_hotfix=True,
-                                current_build=cb,
-                                new_build=bb,
-                            )
-                    )
-                    return
+            try:
+                is_newer = parse_ver(latest_version) > parse_ver(current_version)
+            except Exception:
+                is_newer = latest_version > current_version
 
-            # No update of any kind
-            if not silent:
+            if is_newer:
                 self.root.after(
                     0,
-                    lambda: messagebox.showinfo(
-                        "Up to Date",
-                        f"You are running the latest version\n"
-                        f"v{current_version}  build {current_build}."
-                    )
+                    lambda: self._prompt_update(latest_version, current_version, download_url)
                 )
+            else:
+                if not silent:
+                    self.root.after(
+                        0,
+                        lambda: messagebox.showinfo(
+                            "Up to Date", f"You are running the latest version (v{current_version})."
+                        )
+                    )
 
         except Exception as e:
             if not silent:
@@ -866,78 +717,22 @@ class MainApp:
                     )
                 )
 
-    def _prompt_update(self, latest_version, current_version, download_url,
-                        is_patch=False, download_size=0,
-                        is_hotfix=False, current_build=0, new_build=0):
-        """Prompt the user to install an available update or hotfix.
-
-        Parameters
-        ----------
-        latest_version : str
-            The new version string (without leading 'v').
-        current_version : str
-            The currently installed version string.
-        download_url : str
-            Direct URL to the ZIP asset (patch preferred, full as fallback).
-        is_patch : bool
-            True when *download_url* points to a differential patch ZIP.
-        download_size : int
-            Reported byte size of the asset (0 when unknown).
-        is_hotfix : bool
-            True when the version number is unchanged but a higher build is
-            available on the same release (same-version hotfix).
-        current_build : int
-            The locally installed build number (used for hotfix display).
-        new_build : int
-            The remote build number being offered (used for hotfix display).
-        """
-        # Build the size hint string
-        if download_size > 0:
-            size_mb = download_size / (1024 * 1024)
-            size_hint = f"{size_mb:.1f} MB"
-        else:
-            size_hint = "unknown size"
-
-        if is_hotfix:
-            title = "Hotfix Available"
-            heading = (
-                f"A hotfix is available for v{current_version}!\n\n"
-                f"Installed : v{current_version}  build {current_build}\n"
-                f"Available : v{current_version}  build {new_build}\n\n"
-                f"Hotfix patch — {size_hint}\n"
-                f"Only changed files will be downloaded (fast).\n\n"
-                f"Would you like to install the hotfix now?"
-            )
-        else:
-            update_type = "Patch update" if is_patch else "Full update"
-            type_note = (
-                "Only changed files will be downloaded (fast)."
-                if is_patch else
-                "The complete application package will be downloaded."
-            )
-            title = "Update Available"
-            heading = (
-                f"A new version (v{latest_version}) is available!\n\n"
-                f"Current Version : v{current_version}\n"
-                f"New Version     : v{latest_version}\n\n"
-                f"{update_type} — {size_hint}\n"
-                f"{type_note}\n\n"
-                f"Would you like to download and install the update now?"
-            )
-
-        if messagebox.askyesno(title, heading):
+    def _prompt_update(self, latest_version, current_version, download_url):
+        if messagebox.askyesno(
+            "Update Available",
+            f"A new version ({latest_version}) is available!\n\n"
+            f"Current Version: v{current_version}\n\n"
+            f"Would you like to download and update now?"
+        ):
             if getattr(sys, 'frozen', False):
                 app_dir = Path(sys.executable).parent
             else:
                 app_dir = Path(__file__).resolve().parent
-
+                
             updater_exe = app_dir / "updater.exe"
 
             if not updater_exe.exists():
-                messagebox.showerror(
-                    "Update Error",
-                    "updater.exe was not found in the application directory."
-                )
+                messagebox.showerror("Update Error", "updater.exe was not found in the application directory.")
                 return
 
             cmd = [
@@ -945,7 +740,7 @@ class MainApp:
                 "--url", download_url,
                 "--version", latest_version,
                 "--pid", str(os.getpid()),
-                "--appdir", str(app_dir),
+                "--appdir", str(app_dir)
             ]
 
             subprocess.Popen(cmd)
@@ -1133,10 +928,14 @@ class MainApp:
         self.active_page = key
         self._refresh_nav_highlight()
 
+<<<<<<< Updated upstream
+=======
         # A foreign child HWND needs an explicit hide when another stacked Tk
         # page is selected; Tk's tkraise alone cannot manage its visibility.
         if key != "tool5":
             self._set_tool5_window_visibility(False)
+        if key != "tool6" and self.tool6_app is not None:
+            self.tool6_app.set_browser_visible(False)
 
         # Map of tool keys → whether they are already loaded
         _tool_loaded = {
@@ -1145,6 +944,7 @@ class MainApp:
             "tool3": self.tool3_app is not None or self.tool3_error is not None,
             "tool4": self.tool4_app is not None or self.tool4_error is not None,
             "tool5": self.tool5_ready or self.tool5_error is not None,
+            "tool6": self.tool6_app is not None or self.tool6_error is not None,
         }
 
         if key in _tool_loaded and not _tool_loaded[key]:
@@ -1163,11 +963,14 @@ class MainApp:
         self.pages[key].tkraise()
         if key == "tool5":
             self._set_tool5_window_visibility(True)
+        elif key == "tool6" and self.tool6_app is not None:
+            self.tool6_app.set_browser_visible(True)
 
     # ------------------------------------------------------------------
     # Deferred Tool Loader (runs behind the spinner overlay)
     # ------------------------------------------------------------------
     def _deferred_tool_load(self, key):
+>>>>>>> Stashed changes
         if key == "tool1":
             self._ensure_tool1()
         elif key == "tool2":
@@ -1176,9 +979,15 @@ class MainApp:
             self._ensure_tool3()
         elif key == "tool4":
             self._ensure_tool4()
+<<<<<<< Updated upstream
+
+        self.pages[key].tkraise()
+=======
         elif key == "tool5":
             self._ensure_tool5()
             return  # tool5 manages its own overlay
+        elif key == "tool6":
+            self._ensure_tool6()
         self._hide_loading_overlay()
 
     # ------------------------------------------------------------------
@@ -1190,6 +999,7 @@ class MainApp:
         "tool3": "Outlook Email Sender",
         "tool4": "User KPI",
         "tool5": "Korber AuditShip",
+        "tool6": "Website Data Grabber",
     }
 
     def _show_loading_overlay(self, key):
@@ -1284,6 +1094,7 @@ class MainApp:
             except Exception:
                 pass
             self._loading_overlay = None
+>>>>>>> Stashed changes
 
     # ------------------------------------------------------------------
     # Dashboard Page with Aurora Canvas & Frosted Cards
@@ -1300,7 +1111,7 @@ class MainApp:
                 return
             if self._resize_timer is not None:
                 self.root.after_cancel(self._resize_timer)
-            self._resize_timer = self.root.after(150, lambda: self._update_aurora_bg(w, h))
+            self._resize_timer = self.root.after(30, lambda: self._update_aurora_bg(w, h))
 
         self.dash_canvas.bind("<Configure>", on_canvas_resize)
 
@@ -1318,12 +1129,7 @@ class MainApp:
         self._build_dashboard_content(self.dash_overlay)
 
     def _update_aurora_bg(self, w, h):
-        if getattr(self, '_last_bg_size', None) == (w, h):
-            return
         try:
-            if not self.aurora_base_image:
-                return
-            self._last_bg_size = (w, h)
             resized = self.aurora_base_image.resize((w, h), Image.Resampling.BILINEAR)
             self.bg_photo = ImageTk.PhotoImage(resized)
             self.dash_canvas.delete("aurora_bg")
@@ -1394,29 +1200,31 @@ class MainApp:
             side_pad=(0, 12)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 4: User KPI
+        # Card 4: User Data Manager
         self._make_aurora_card(
             parent=cards_row,
             icon="👥",
-            badge="USER KPI",
+            badge="TASK & METRIC LOGS",
             badge_color=AURORA_AMBER,
             accent_color=AURORA_AMBER,
-            title="User KPI",
+            title="User Data Manager",
             desc="Operator task logging, job record management, Google Sheets live sync, and daily KPI tracking.",
             page_key="tool4",
-            side_pad=(0, 12)
+            side_pad=(0, 0)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 5: Korber AuditShip
+        # Card 6: Website Data Grabber
+        cards_row_two = tk.Frame(wrap, bg=BASE_BG)
+        cards_row_two.pack(fill="x", pady=(0, 8))
         self._make_aurora_card(
-            parent=cards_row,
-            icon="🚚",
-            badge="LOAD AUDIT & SHIP",
-            badge_color="#f59e0b",
-            accent_color="#f59e0b",
-            title="Korber AuditShip",
-            desc="Audit outbound loads and complete shipping workflows through the Korber One Mobile portal.",
-            page_key="tool5",
+            parent=cards_row_two,
+            icon="🔗",
+            badge="AUTHORISED WEB EXTRACTION",
+            badge_color="#a855f7",
+            accent_color="#a855f7",
+            title="Website Data Grabber",
+            desc="Sign in to an authorised portal, open reconciliation, and export every Job ID.",
+            page_key="tool6",
             side_pad=(0, 0)
         ).pack(side="left", fill="both", expand=True)
 
@@ -1542,7 +1350,7 @@ class MainApp:
         return chip
 
     # ------------------------------------------------------------------
-    # Tool Lazy Loading
+    # Tool 1 / Tool 2 / Tool 3 Lazy Loading
     # ------------------------------------------------------------------
     def _ensure_tool1(self):
         page = self.pages["tool1"]
@@ -1628,31 +1436,50 @@ class MainApp:
             self._show_tool_error(page, "Tool 3: Outlook Email Sender", self.tool3_error)
 
     def _prewarm_tool4(self):
-        """Stub kept for compatibility — Tool 4 now loads lazily on first click."""
-        pass
+        """Pre-instantiate Tool 4 during main launcher idle time to eliminate click lag and stutter."""
+        if self.tool4_app is None and self.tool4_error is None:
+            try:
+                self._ensure_tool4()
+            except Exception:
+                pass
 
     def _ensure_tool4(self):
         page = self.pages["tool4"]
         if self.tool4_app is not None or self.tool4_error is not None:
             return
         try:
-            import KPI
+            import efldatamanager
         except Exception:
             self.tool4_error = traceback.format_exc()
-            self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
+            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
             return
 
         try:
-            page.configure(bg=KPI.BG_DARK)
-            self.tool4_app = KPI.EFLApp(
-                self.root, container=page, standalone=False,
-                profile=load_saved_profile(),
-                on_open_settings=lambda: self.show_page("settings"),
+            self.tool4_app = efldatamanager.EFLApp(
+                self.root, container=page, standalone=False
             )
         except Exception:
             self.tool4_error = traceback.format_exc()
             self.tool4_app = None
+<<<<<<< Updated upstream
+            self._show_tool_error(page, "Tool 4: User Data Manager", self.tool4_error)
+=======
             self._show_tool_error(page, "Tool 4: User KPI", self.tool4_error)
+
+    def _ensure_tool6(self):
+        page = self.pages["tool6"]
+        if self.tool6_app is not None or self.tool6_error is not None:
+            return
+        try:
+            import website_data_grabber
+            self.tool6_app = website_data_grabber.WebsiteDataGrabberApp(
+                self.root, container=page, standalone=False, config_store=self.config_store,
+                on_open_settings=lambda: self.show_page("settings"),
+            )
+        except Exception:
+            self.tool6_error = traceback.format_exc()
+            self.tool6_app = None
+            self._show_tool_error(page, "Tool 6: Website Data Grabber", self.tool6_error)
 
     def _ensure_tool5(self):
         """Build a launcher page for AuditShip — process starts only when the user clicks the button."""
@@ -2322,6 +2149,7 @@ class MainApp:
                 pass
         self.tool5_overlay = None
         self.tool5_launch_button = None
+>>>>>>> Stashed changes
 
     def _show_tool_error(self, page, tool_name, error_text):
         for w in page.winfo_children():
@@ -2415,42 +2243,6 @@ class MainApp:
         check_btn.bind("<Button-1>", lambda e: self.check_for_updates(silent=False))
         check_btn.bind("<Enter>", lambda e: check_btn.config(bg=AURORA_CYAN, fg="#0b1420"))
         check_btn.bind("<Leave>", lambda e: check_btn.config(bg="#0d1b2a", fg="#ffffff"))
-
-        # KPI identity is local to this installation and controls Tool 4.
-        kpi_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
-        kpi_card.pack(fill="x", pady=(0, 20))
-        kpi_top = tk.Frame(kpi_card, bg="#ffffff")
-        kpi_top.pack(fill="x", pady=(0, 8))
-        tk.Label(kpi_top, text="KPI USER PROFILE", bg="#ffffff", fg="#64748b",
-                 font=("Segoe UI", 8, "bold")).pack(side="left")
-        configured_profile = load_saved_profile()
-        self.kpi_status_pill = tk.Label(
-            kpi_top, text="● Configured" if configured_profile else "● Needs Setup",
-            bg="#0d1b2a", fg=AURORA_MINT if configured_profile else "#f59e0b",
-            font=("Segoe UI", 8, "bold"), padx=8, pady=2,
-        )
-        self.kpi_status_pill.pack(side="right")
-        tk.Label(kpi_card, text="Use your registered User ID and individual User Code for KPI entry and exports.",
-                 bg="#ffffff", fg="#64748b", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 14))
-        kpi_fields = tk.Frame(kpi_card, bg="#ffffff")
-        kpi_fields.pack(fill="x", pady=(0, 14))
-        kpi_fields.columnconfigure(1, weight=1)
-        for row, (label, key) in enumerate((("User ID:", "kpi_user_id"), ("User Code:", "kpi_user_code"))):
-            tk.Label(kpi_fields, text=label, bg="#ffffff", fg="#0f172a",
-                     font=("Segoe UI", 9, "bold"), width=16, anchor="w").grid(
-                         row=row, column=0, sticky="w", padx=(0, 12), pady=(0, 8))
-            entry = ttk.Entry(kpi_fields, font=("Segoe UI", 9))
-            entry.insert(0, self.config_store.config.get(key, ""))
-            entry.grid(row=row, column=1, sticky="ew", pady=(0, 8))
-            setattr(self, f"{key}_entry", entry)
-        kpi_actions = tk.Frame(kpi_card, bg="#ffffff")
-        kpi_actions.pack(fill="x")
-        tk.Button(kpi_actions, text="Save KPI Profile", bg="#0d1b2a", fg="#ffffff",
-                  font=("Segoe UI", 9, "bold"), padx=16, pady=8,
-                  relief="flat", cursor="hand2", command=self._save_kpi_profile).pack(side="left")
-        self.kpi_msg_lbl = tk.Label(kpi_actions, text="", bg="#ffffff", fg=AURORA_MINT,
-                                    font=("Segoe UI", 9, "bold"))
-        self.kpi_msg_lbl.pack(side="left", padx=(14, 0))
 
         # --- Körber Cloud Authentication Card ---
         korber_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
@@ -2547,6 +2339,8 @@ class MainApp:
         )
         self.korber_msg_lbl.pack(side="left", padx=(14, 0))
 
+<<<<<<< Updated upstream
+=======
         # --- AuditShip credentials (separate from Körber Cloud automation) ---
         auditship_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         auditship_card.pack(fill="x", pady=(0, 20))
@@ -2625,6 +2419,71 @@ class MainApp:
         )
         self.auditship_msg_lbl.pack(side="left", padx=(14, 0))
 
+        # --- Website Data Grabber credentials ---
+        grabber_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
+        grabber_card.pack(fill="x", pady=(0, 20))
+        grabber_settings = self.config_store.config if self.config_store else {}
+        grabber_login_url = grabber_settings.get("data_grabber_login_url", "https://active.efl3plofc.com/login")
+        grabber_user = grabber_settings.get("data_grabber_user", "")
+        try:
+            from website_data_grabber import _load_saved_password
+            grabber_password = _load_saved_password()
+        except Exception:
+            grabber_password = ""
+        grabber_header = tk.Frame(grabber_card, bg="#ffffff")
+        grabber_header.pack(fill="x", pady=(0, 8))
+        tk.Label(grabber_header, text="WEBSITE DATA GRABBER", bg="#ffffff", fg="#64748b",
+                 font=("Segoe UI", 8, "bold")).pack(side="left")
+        self.grabber_status_pill = tk.Label(
+            grabber_header,
+            text="● Configured" if grabber_user and grabber_password else "● Needs Setup",
+            bg="#0d1b2a", fg=AURORA_MINT if grabber_user and grabber_password else "#f59e0b",
+            font=("Segoe UI", 8, "bold"), padx=8, pady=2,
+        )
+        self.grabber_status_pill.pack(side="right")
+        tk.Label(
+            grabber_card,
+            text="Configure Tool 6 login and reconciliation routes. The password is saved in Windows Credential Manager, not config.json.",
+            bg="#ffffff", fg="#64748b", font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(0, 14))
+        grabber_fields = tk.Frame(grabber_card, bg="#ffffff")
+        grabber_fields.pack(fill="x", pady=(0, 14))
+        grabber_fields.columnconfigure(1, weight=1)
+        for row, label in enumerate(("Login URL:", "Username / Email:", "Password:", "Reconciliation URL:")):
+            tk.Label(grabber_fields, text=label, bg="#ffffff", fg="#0f172a",
+                     font=("Segoe UI", 9, "bold"), width=18, anchor="w").grid(
+                         row=row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.grabber_login_url_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
+        self.grabber_login_url_entry.insert(0, grabber_login_url)
+        self.grabber_login_url_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
+        self.grabber_user_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
+        self.grabber_user_entry.insert(0, grabber_user)
+        self.grabber_user_entry.grid(row=1, column=1, sticky="ew", pady=(0, 8))
+        grabber_password_row = tk.Frame(grabber_fields, bg="#ffffff")
+        grabber_password_row.grid(row=2, column=1, sticky="ew", pady=(0, 8))
+        grabber_password_row.columnconfigure(0, weight=1)
+        self.grabber_pass_entry = ttk.Entry(grabber_password_row, font=("Segoe UI", 9), show="•")
+        self.grabber_pass_entry.insert(0, grabber_password)
+        self.grabber_pass_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.grabber_pass_toggle_btn = tk.Label(grabber_password_row, text="👁 Show", bg="#f1f5f9", fg="#334155",
+                                                font=("Segoe UI", 8, "bold"), padx=10, pady=4, cursor="hand2", bd=1, relief="solid")
+        self.grabber_pass_toggle_btn.grid(row=0, column=1)
+        self.grabber_pass_toggle_btn.bind("<Button-1>", lambda e: self._toggle_grabber_password_visibility())
+        self.grabber_reconciliation_url_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
+        self.grabber_reconciliation_url_entry.insert(0, grabber_settings.get("data_grabber_reconciliation_url", "https://active.efl3plofc.com/clerk-dashboard?job_type=OUTBOUND"))
+        self.grabber_reconciliation_url_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        grabber_actions = tk.Frame(grabber_card, bg="#ffffff")
+        grabber_actions.pack(fill="x", pady=(8, 0))
+        tk.Button(grabber_actions, text="Save Tool 6 Settings", bg="#0d1b2a", fg="#ffffff",
+                  font=("Segoe UI", 9, "bold"), padx=16, pady=8, relief="flat", cursor="hand2",
+                  command=self._save_data_grabber_settings).pack(side="left")
+        tk.Button(grabber_actions, text="Clear Saved Credentials", bg="#e2e8f0", fg="#0f172a",
+                  font=("Segoe UI", 9, "bold"), padx=16, pady=8, relief="flat", cursor="hand2",
+                  command=self._clear_data_grabber_credentials).pack(side="left", padx=(8, 0))
+        self.grabber_msg_lbl = tk.Label(grabber_actions, text="", bg="#ffffff", fg=AURORA_MINT, font=("Segoe UI", 9, "bold"))
+        self.grabber_msg_lbl.pack(side="left", padx=(14, 0))
+
+>>>>>>> Stashed changes
         # --- Google Sheets & Web App Integration Card ---
         gsheet_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         gsheet_card.pack(fill="x", pady=(0, 20))
@@ -2755,12 +2614,6 @@ class MainApp:
         kb_diag_status = f"{kb_user_val} (Configured)" if (kb_user_val and kb_pass_val) else ("Needs Setup" if not kb_user_val else "Password Missing")
         self._make_diag_row(diag_grid, "Körber Account:", kb_diag_status)
 
-        as_user_val = self.config_store.get_auditship_user() if self.config_store else ""
-        as_pass_val = self.config_store.get_auditship_pass() if self.config_store else ""
-        as_fork_val = self.config_store.get_auditship_fork_id() if self.config_store else ""
-        as_diag_status = f"{as_user_val} (Fork: {as_fork_val})" if (as_user_val and as_pass_val and as_fork_val) else ("Needs Setup" if not as_user_val else "Credentials Missing")
-        self._make_diag_row(diag_grid, "AuditShip Account:", as_diag_status)
-
         sync_status = "Configured" if is_configured else "Unconfigured"
         self._make_diag_row(diag_grid, "Google Cloud Sync:", sync_status)
 
@@ -2776,35 +2629,11 @@ class MainApp:
         tk.Label(
             about_card,
             text="EFL NEXUS is an enterprise automation suite combining Korber Automation, "
-            "Load Reconciliation, Outlook Email Dispatch, User Data Management, and "
-            "Korber AuditShip into a single unified client.\n\n"
+            "Load Reconciliation, and Outlook Email Dispatch into a single unified client.\n\n"
             "For feedback, questions, or bug reports, please refer to the internal repository "
             "or contact the automation engineering team.",
             bg="#ffffff", fg="#334155", font=("Segoe UI", 9), wraplength=800, justify="left"
         ).pack(anchor="w")
-
-    def _save_kpi_profile(self):
-        try:
-            user_id, user_code = validate_profile(
-                self.kpi_user_id_entry.get(), self.kpi_user_code_entry.get()
-            )
-        except ValueError as error:
-            self.kpi_msg_lbl.config(text=str(error), fg="#dc2626")
-            return False
-
-        old_config = self.config_store.config.copy()
-        if not self.config_store.save(kpi_user_id=user_id, kpi_user_code=user_code):
-            self.config_store.config = old_config
-            self.kpi_msg_lbl.config(text="Could not save KPI profile. Check file access.", fg="#dc2626")
-            return False
-
-        self.kpi_user_id_entry.delete(0, "end")
-        self.kpi_user_id_entry.insert(0, user_id)
-        self.kpi_status_pill.config(text="● Configured", fg=AURORA_MINT)
-        self.kpi_msg_lbl.config(text="KPI profile saved.", fg=AURORA_MINT)
-        if self.tool4_app is not None:
-            self.tool4_app.set_profile((user_id, user_code))
-        return True
 
     def _toggle_korber_password_visibility(self):
         """Toggles masking on the Körber password entry."""
@@ -2847,6 +2676,8 @@ class MainApp:
             self.korber_msg_lbl.config(text="✓ Credentials saved successfully!", fg=AURORA_MINT)
             self.root.after(3500, lambda: self.korber_msg_lbl.config(text="") if hasattr(self, 'korber_msg_lbl') and self.korber_msg_lbl.winfo_exists() else None)
 
+<<<<<<< Updated upstream
+=======
     def _toggle_auditship_password_visibility(self):
         if self.auditship_pass_entry.cget("show"):
             self.auditship_pass_entry.config(show="")
@@ -2873,6 +2704,64 @@ class MainApp:
             if self.auditship_msg_lbl.winfo_exists() else None
         )
 
+    def _toggle_grabber_password_visibility(self):
+        if self.grabber_pass_entry.cget("show"):
+            self.grabber_pass_entry.config(show="")
+            self.grabber_pass_toggle_btn.config(text="🔒 Hide")
+        else:
+            self.grabber_pass_entry.config(show="•")
+            self.grabber_pass_toggle_btn.config(text="👁 Show")
+
+    def _save_data_grabber_settings(self):
+        login_url = self.grabber_login_url_entry.get().strip()
+        username = self.grabber_user_entry.get().strip()
+        password = self.grabber_pass_entry.get()
+        reconciliation_url = self.grabber_reconciliation_url_entry.get().strip()
+        if not login_url.startswith(("https://", "http://")) or not reconciliation_url.startswith(("https://", "http://")):
+            messagebox.showwarning("Invalid URL", "Enter complete https:// login and reconciliation URLs for Tool 6.")
+            return
+        if not username or not password:
+            messagebox.showwarning("Incomplete credentials", "Enter the Tool 6 username/email and password.")
+            return
+        try:
+            from website_data_grabber import _save_password
+            _save_password(password, username)
+            if not self.config_store or not self.config_store.save(
+                data_grabber_login_url=login_url,
+                data_grabber_user=username,
+                data_grabber_reconciliation_url=reconciliation_url,
+            ):
+                raise RuntimeError("Could not save Tool 6 connection settings.")
+        except Exception as exc:
+            messagebox.showerror("Save Failed", f"Tool 6 credentials could not be saved: {exc}")
+            return
+        self.grabber_status_pill.config(text="● Configured", fg=AURORA_MINT)
+        self.grabber_msg_lbl.config(text="✓ Tool 6 settings saved securely!", fg=AURORA_MINT)
+        if self.tool6_app is not None:
+            self.tool6_app.set_connection_settings(login_url, username, password, reconciliation_url)
+        self.root.after(3500, lambda: self.grabber_msg_lbl.config(text="") if self.grabber_msg_lbl.winfo_exists() else None)
+
+    def _clear_data_grabber_credentials(self):
+        if not messagebox.askyesno("Clear Tool 6 credentials", "Remove the saved Tool 6 username and password from this computer?"):
+            return
+        try:
+            from website_data_grabber import _clear_saved_password
+            _clear_saved_password()
+            if self.config_store:
+                self.config_store.save(data_grabber_user="")
+        except Exception as exc:
+            messagebox.showerror("Clear Failed", f"Tool 6 credentials could not be removed: {exc}")
+            return
+        self.grabber_user_entry.delete(0, tk.END)
+        self.grabber_pass_entry.delete(0, tk.END)
+        self.grabber_status_pill.config(text="● Needs Setup", fg="#f59e0b")
+        self.grabber_msg_lbl.config(text="Saved Tool 6 credentials removed.", fg="#64748b")
+        if self.tool6_app is not None:
+            self.tool6_app.set_connection_settings(
+                self.grabber_login_url_entry.get().strip(), "", "", self.grabber_reconciliation_url_entry.get().strip()
+            )
+
+>>>>>>> Stashed changes
     def _save_gsheet_settings(self):
         webapp_url = self.webapp_entry.get().strip()
         sheet_url = self.sheet_entry.get().strip()
@@ -2952,28 +2841,25 @@ class MainApp:
                 pass
         if self.tool4_app is not None:
             try:
-                self.tool4_app.close()
+                self.tool4_app.close_popup_safely()
+                self.tool4_app.cancel_all_timers()
             except Exception:
                 pass
-        if self.tool5_process is not None and self.tool5_process.poll() is None:
-            try:
-                if self.tool5_hwnd:
-                    import ctypes
-                    from ctypes import wintypes
-                    user32 = ctypes.WinDLL("user32", use_last_error=True)
-                    user32.PostMessageW.argtypes = [
-                        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
-                    ]
-                    user32.PostMessageW.restype = wintypes.BOOL
-                    user32.PostMessageW(self.tool5_hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                else:
-                    self.tool5_process.terminate()
-            except Exception:
-                pass
+        if self.tool6_app is not None:
+            browser_process = getattr(self.tool6_app, "browser_process", None)
+            if browser_process is not None and browser_process.poll() is None:
+                try:
+                    browser_process.terminate()
+                except Exception:
+                    pass
         self.root.destroy()
 
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "--internal-browser":
+        from website_data_grabber import run_internal_browser
+        run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else None)
+        raise SystemExit(0)
     try:
         import ctypes
         myappid = 'efl.nexus.app.unified'

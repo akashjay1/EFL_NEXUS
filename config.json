@@ -1,12 +1,20 @@
 {
     "webapp_url": "https://script.google.com/macros/s/AKfycbxr71I5zx74W2KW-n-b-4p61ShQdmlHa1C4LUSQC6UvCiwlR94KaEZ2ongpAQ0cmCR9Fg/exec",
     "sheet_url": "https://docs.google.com/spreadsheets/d/1hOEPbt4uIl40LsbZGsAOTTDSMIDAEU4i9d-iCDv4d2A/edit?usp=sharing",
-    "korber_user": "",
-    "korber_pass": "",
+    "korber_user": "LPAKASHM",
+    "korber_pass": "3537@",
     "korber_url": "https://lopwaprodweb.koerbercloud.com/core/Default.html",
+<<<<<<< Updated upstream
+    "auditship_user": "LAAKAS",
+    "auditship_pass": "adawda"
+=======
     "kpi_user_id": "Akash",
     "kpi_user_code": "CSSUN152",
     "auditship_user": "",
     "auditship_pass": "",
-    "auditship_fork_id": ""
+    "auditship_fork_id": "",
+    "data_grabber_login_url": "https://active.efl3plofc.com/login",
+    "data_grabber_user": "lka-3plcssops5@efl.global",
+    "data_grabber_reconciliation_url": "https://active.efl3plofc.com/clerk-dashboard?job_type=OUTBOUND"
+>>>>>>> Stashed changes
 }

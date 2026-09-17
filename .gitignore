@@ -1,24 +1,9 @@
-# Exclude credentials
-credentials.json
-efl_users.json
-
-# Cache and temporary files
-.efl_records_cache.json
-*.pyc
-*.spec
-
-# Exclude all folders except assets
-/*/
-!/assets/
-!/tests/
-.vscode/
 __pycache__/
+*.pyc
+.efl_records_cache.json
 
-# AuditShip's deployable standalone application.
-!/Korber_AuditShip/
-/Korber_AuditShip/*
-!/Korber_AuditShip/KORBER AuditShip.exe
-!/Korber_AuditShip/_internal/
-!/Korber_AuditShip/_internal/**
-RELEASE_NOTES.md
-sent_log.xlsx
+# Runtime-generated folders — never commit these
+diagnostics/
+chrome_automation_profile_*/
+V3.zip
+EFL_v1.0.0.zip
