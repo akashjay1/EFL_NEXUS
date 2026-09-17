@@ -20,3 +20,5 @@ __pycache__/
 !/Korber_AuditShip/KORBER AuditShip.exe
 !/Korber_AuditShip/_internal/
 !/Korber_AuditShip/_internal/**
+RELEASE_NOTES.md
+sent_log.xlsx

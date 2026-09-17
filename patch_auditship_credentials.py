@@ -20,7 +20,7 @@ from PyInstaller.archive.writers import CArchiveWriter
 
 
 SCRIPT_NAME = "FINAL_CODE2_DEFAULT_KAWSHI"
-BRIDGE_MARKER = "_AUDITSHIP_CREDENTIAL_BRIDGE_V1"
+BRIDGE_MARKER = "_AUDITSHIP_CREDENTIAL_BRIDGE_V2"
 DEFAULT_EXE = Path(__file__).resolve().parent / "Korber_AuditShip" / "KORBER AuditShip.exe"
 COOKIE_FORMAT = "!8sIIII64s"
 TOC_FORMAT = "!IIIIBc"
@@ -35,10 +35,24 @@ def _has_login_function(code):
     )
 
 
+def _extract_original_script(script_bytes):
+    code = marshal.loads(script_bytes)
+    if any(name.startswith("_AUDITSHIP_CREDENTIAL_BRIDGE") for name in code.co_names):
+        for c in code.co_consts:
+            if isinstance(c, bytes):
+                try:
+                    orig = marshal.loads(c)
+                    if _has_login_function(orig):
+                        return c
+                except Exception:
+                    pass
+    return script_bytes
+
+
 def _bridge_script(original_script):
-    # The original entry point assigns static LOGIN_USERNAME/PASSWORD values.
-    # STORE_NAME writes through this mapping; replacing those two assignments
-    # also updates the real module globals used by fast_login_if_needed().
+    # The original entry point assigns static LOGIN_USERNAME/PASSWORD/FORK_ID values.
+    # STORE_NAME writes through this mapping; replacing those assignments
+    # also updates the real module globals used by fast_login_if_needed() and handle_fork_identifier_if_present().
     source = f'''
 import json as _auditship_json
 import marshal as _auditship_marshal
@@ -56,11 +70,13 @@ except (OSError, ValueError):
 
 _auditship_user = _auditship_os.environ.get("AUDITSHIP_USER") or _auditship_settings.get("auditship_user", "")
 _auditship_password = _auditship_os.environ.get("AUDITSHIP_PASS") or _auditship_settings.get("auditship_pass", "")
-if not _auditship_user or not _auditship_password:
+_auditship_fork_id = _auditship_os.environ.get("AUDITSHIP_FORK_ID") or _auditship_settings.get("auditship_fork_id", "") or _auditship_user
+
+if not _auditship_user or not _auditship_password or not _auditship_fork_id:
     from tkinter import messagebox as _auditship_messagebox
     _auditship_messagebox.showerror(
         "AuditShip credentials missing",
-        "Enter the AuditShip username and password in EFL NEXUS Settings before opening AuditShip."
+        "Enter the AuditShip username, password, and Fork ID in EFL NEXUS Settings before opening AuditShip."
     )
     raise SystemExit(1)
 
@@ -71,6 +87,8 @@ class _AuditShipNamespace(dict):
             value = _auditship_user
         elif key == "LOGIN_PASSWORD":
             value = _auditship_password
+        elif key == "FORK_ID":
+            value = _auditship_fork_id
         super().__setitem__(key, value)
         _auditship_globals[key] = value
 
@@ -110,11 +128,13 @@ def patch(executable):
     reader = CArchiveReader(str(executable))
     if SCRIPT_NAME not in reader.toc:
         raise ValueError("AuditShip entry point not found; this build is unsupported")
-    original_script = reader.extract(SCRIPT_NAME)
-    code = marshal.loads(original_script)
+    script_bytes = reader.extract(SCRIPT_NAME)
+    code = marshal.loads(script_bytes)
     if BRIDGE_MARKER in code.co_names:
         return False
-    if not _has_login_function(code):
+    original_script = _extract_original_script(script_bytes)
+    orig_code = marshal.loads(original_script)
+    if not _has_login_function(orig_code):
         raise ValueError("AuditShip login structure changed; refusing to patch")
 
     package, entries, pyvers, pylib = _raw_toc_entries(executable, reader)

@@ -145,7 +145,7 @@ def style_button(btn, kind="primary"):
 # --------------------------------------------------------------------------
 
 class ConfigStore:
-    """Handles saving and loading user-defined integration settings."""
+    """Handles saving and loading user-defined settings (Google Sheets, Web App, Korber Credentials)."""
 
     def __init__(self, path):
         self.path = path
@@ -163,13 +163,10 @@ class ConfigStore:
             "sheet_url": "",
             "korber_user": "",
             "korber_pass": "",
-            "korber_url": "https://lopwaprodweb.koerbercloud.com/core/Default.html",
-            "auditship_user": "",
-            "auditship_pass": "",
+            "korber_url": "https://lopwaprodweb.koerbercloud.com/core/Default.html"
         }
 
-    def save(self, webapp_url=None, sheet_url=None, korber_user=None, korber_pass=None,
-             korber_url=None, auditship_user=None, auditship_pass=None, **kwargs):
+    def save(self, webapp_url=None, sheet_url=None, korber_user=None, korber_pass=None, korber_url=None, **kwargs):
         if webapp_url is not None:
             self.config["webapp_url"] = str(webapp_url).strip()
         if sheet_url is not None:
@@ -180,10 +177,6 @@ class ConfigStore:
             self.config["korber_pass"] = str(korber_pass).strip()
         if korber_url is not None:
             self.config["korber_url"] = str(korber_url).strip()
-        if auditship_user is not None:
-            self.config["auditship_user"] = str(auditship_user).strip()
-        if auditship_pass is not None:
-            self.config["auditship_pass"] = str(auditship_pass)
         for k, v in kwargs.items():
             self.config[k] = str(v).strip() if v is not None else ""
         try:
@@ -210,10 +203,13 @@ class ConfigStore:
         return self.config.get("korber_url", "") or os.environ.get("KORBER_URL", "https://lopwaprodweb.koerbercloud.com/core/Default.html")
 
     def get_auditship_user(self):
-        return self.config.get("auditship_user", "")
+        return self.config.get("auditship_user", "") or os.environ.get("AUDITSHIP_USER", "")
 
     def get_auditship_pass(self):
-        return self.config.get("auditship_pass", "")
+        return self.config.get("auditship_pass", "") or os.environ.get("AUDITSHIP_PASS", "")
+
+    def get_auditship_fork_id(self):
+        return self.config.get("auditship_fork_id", "") or os.environ.get("AUDITSHIP_FORK_ID", "")
 
 
 # --------------------------------------------------------------------------
