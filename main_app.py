@@ -74,7 +74,7 @@ NAV_ITEMS = [
     ("tool3", "📧", "Outlook Email Sender"),
     ("tool4", "👥", "User KPI"),
     ("tool5", "🚚", "Korber AuditShip"),
-    ("tool6", "🔗", "Website Data Grabber"),
+    ("tool6", "🔗", "Pending Jobs"),
     ("settings", "⚙", "Settings"),
 ]
 
@@ -333,8 +333,8 @@ class MainApp:
     def __init__(self, root):
         self.root = root
         self.root.title("EFL NEXUS")
-        self.root.geometry("1420x920")
-        self.root.minsize(1000, 650)
+        self.root.geometry("1560x940")
+        self.root.minsize(1050, 700)
         self.root.configure(bg=BASE_BG)
 
         # Always open maximized in full screen
@@ -977,7 +977,7 @@ class MainApp:
         "tool3": "Outlook Email Sender",
         "tool4": "User KPI",
         "tool5": "Korber AuditShip",
-        "tool6": "Website Data Grabber",
+        "tool6": "Pending Jobs",
     }
 
     def _show_loading_overlay(self, key):
@@ -1207,14 +1207,14 @@ class MainApp:
             side_pad=(0, 12)
         ).pack(side="left", fill="both", expand=True)
 
-        # Card 6: Website Data Grabber
+        # Card 6: Pending Jobs
         self._make_aurora_card(
             parent=cards_row_two,
             icon="🔗",
             badge="AUTHORISED WEB EXTRACTION",
             badge_color="#a855f7",
             accent_color="#a855f7",
-            title="Website Data Grabber",
+            title="Pending Jobs",
             desc="Sign in to an authorised portal, open reconciliation, and export every Job ID.",
             page_key="tool6",
             side_pad=(0, 0)
@@ -1468,11 +1468,62 @@ class MainApp:
                 self.root, container=page, standalone=False, config_store=self.config_store,
                 on_open_settings=lambda: self.show_page("settings"),
                 on_job_started=self._prefill_kpi_for_job,
+                on_create_gatepass=self._create_gatepass_for_job,
             )
         except Exception:
             self.tool6_error = traceback.format_exc()
             self.tool6_app = None
-            self._show_tool_error(page, "Tool 6: Website Data Grabber", self.tool6_error)
+            self._show_tool_error(page, "Tool 6: Pending Jobs", self.tool6_error)
+
+    def _create_gatepass_for_job(self, record: dict[str, str]) -> None:
+        """Called when Tool 6 'Create Gatepass' button is clicked.
+
+        Routing:
+          OUT_* → Fills Korber Automation GDN fields (Warehouse ID, Client Code, Gate Pass No, Delivery Location, Seal No)
+          IN_*  → Fills Korber Automation GRN fields (Warehouse ID, Gate Pass No)
+        Navigates to Tool 1 (Korber Automation) automatically.
+        """
+        job_id = str(record.get("job_id", "")).strip()
+        upper = job_id.upper()
+        if not (upper.startswith("OUT_") or upper.startswith("IN_")):
+            messagebox.showwarning("Create Gatepass", f"Job ID '{job_id}' must start with 'OUT_' or 'IN_'.")
+            return
+
+        def _do_route():
+            self._ensure_tool1()
+            lane_a = self.tool1_lanes.get("a") if isinstance(self.tool1_lanes, dict) else None
+            if lane_a is None:
+                messagebox.showerror("Tool 1 Unavailable", "Korber Automation (Tool 1) could not be loaded.")
+                return
+
+            wh = record.get("warehouse", "")
+            client = record.get("client", "")
+            gp = record.get("gatepass", "")
+            deliv = record.get("delivery_location", "")
+            seal = record.get("seal", "")
+
+            if upper.startswith("OUT_"):
+                deliv_clean = str(deliv or "").strip()
+                if not deliv_clean or deliv_clean == "-":
+                    deliv_clean = "N/A"
+                seal_clean = str(seal or "").strip()
+                if not seal_clean or seal_clean == "-":
+                    seal_clean = "N/A"
+                lane_a.prefill_gdn(
+                    warehouse=wh,
+                    client=client,
+                    gatepass=gp,
+                    delivery_location=deliv_clean,
+                    seal=seal_clean,
+                )
+            else:
+                lane_a.prefill_grn(
+                    warehouse=wh,
+                    gatepass=gp,
+                )
+            self.show_page("tool1")
+
+        self.root.after(0, _do_route)
 
     def _prefill_kpi_for_job(self, job_id: str) -> None:
         """Called when Tool 6 starts a job — route prefix to the correct KPI section,
@@ -2484,7 +2535,7 @@ class MainApp:
         )
         self.auditship_msg_lbl.pack(side="left", padx=(14, 0))
 
-        # --- Website Data Grabber credentials ---
+        # --- Pending Jobs credentials ---
         grabber_card = tk.Frame(wrap, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=24, pady=20)
         grabber_card.pack(fill="x", pady=(0, 20))
         grabber_settings = self.config_store.config if self.config_store else {}
@@ -2497,7 +2548,7 @@ class MainApp:
             grabber_password = ""
         grabber_header = tk.Frame(grabber_card, bg="#ffffff")
         grabber_header.pack(fill="x", pady=(0, 8))
-        tk.Label(grabber_header, text="WEBSITE DATA GRABBER", bg="#ffffff", fg="#64748b",
+        tk.Label(grabber_header, text="PENDING JOBS", bg="#ffffff", fg="#64748b",
                  font=("Segoe UI", 8, "bold")).pack(side="left")
         self.grabber_status_pill = tk.Label(
             grabber_header,
@@ -2514,10 +2565,10 @@ class MainApp:
         grabber_fields = tk.Frame(grabber_card, bg="#ffffff")
         grabber_fields.pack(fill="x", pady=(0, 14))
         grabber_fields.columnconfigure(1, weight=1)
-        for row, label in enumerate(("Login URL:", "Username / Email:", "Password:", "Reconciliation URL:")):
+        for row, label in enumerate(("Login URL:", "Username / Email:", "Password:", "Reconciliation URL:", "Auto-Refresh (seconds):", "Sound Notification:", "Sound File:")):
             tk.Label(grabber_fields, text=label, bg="#ffffff", fg="#0f172a",
                      font=("Segoe UI", 9, "bold"), width=18, anchor="w").grid(
-                         row=row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+                          row=row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
         self.grabber_login_url_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
         self.grabber_login_url_entry.insert(0, grabber_login_url)
         self.grabber_login_url_entry.grid(row=0, column=1, sticky="ew", pady=(0, 8))
@@ -2537,6 +2588,57 @@ class MainApp:
         self.grabber_reconciliation_url_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
         self.grabber_reconciliation_url_entry.insert(0, grabber_settings.get("data_grabber_reconciliation_url", "https://active.efl3plofc.com/clerk-dashboard?job_type=OUTBOUND"))
         self.grabber_reconciliation_url_entry.grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        self.grabber_refresh_seconds_entry = ttk.Entry(grabber_fields, font=("Segoe UI", 9))
+        self.grabber_refresh_seconds_entry.insert(0, str(grabber_settings.get("data_grabber_refresh_seconds", "5")))
+        self.grabber_refresh_seconds_entry.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+
+        # Sound notification toggle
+        self.grabber_sound_enabled_var = tk.BooleanVar(value=bool(grabber_settings.get("data_grabber_sound_enabled", True)))
+        sound_check_f = tk.Frame(grabber_fields, bg="#ffffff")
+        sound_check_f.grid(row=5, column=1, sticky="w", pady=(0, 8))
+        tk.Checkbutton(
+            sound_check_f,
+            text="Play notification sound when new pending jobs are detected",
+            variable=self.grabber_sound_enabled_var,
+            bg="#ffffff",
+            fg="#0f172a",
+            font=("Segoe UI", 9),
+            activebackground="#ffffff",
+        ).pack(side="left")
+
+        # Sound file path + browse + test
+        sound_file_row = tk.Frame(grabber_fields, bg="#ffffff")
+        sound_file_row.grid(row=6, column=1, sticky="ew", pady=(0, 8))
+        sound_file_row.columnconfigure(0, weight=1)
+        self.grabber_sound_path_entry = ttk.Entry(sound_file_row, font=("Segoe UI", 9))
+        self.grabber_sound_path_entry.insert(0, str(grabber_settings.get("data_grabber_sound_path", "")))
+        self.grabber_sound_path_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        tk.Button(
+            sound_file_row,
+            text="Browse...",
+            bg="#f1f5f9",
+            fg="#0f172a",
+            font=("Segoe UI", 8, "bold"),
+            padx=8,
+            pady=2,
+            relief="solid",
+            bd=1,
+            cursor="hand2",
+            command=self._browse_grabber_sound,
+        ).grid(row=0, column=1, padx=(0, 4))
+        tk.Button(
+            sound_file_row,
+            text="🔊 Test Sound",
+            bg="#f1f5f9",
+            fg="#16a34a",
+            font=("Segoe UI", 8, "bold"),
+            padx=8,
+            pady=2,
+            relief="solid",
+            bd=1,
+            cursor="hand2",
+            command=self._test_grabber_sound,
+        ).grid(row=0, column=2)
         grabber_actions = tk.Frame(grabber_card, bg="#ffffff")
         grabber_actions.pack(fill="x", pady=(8, 0))
         tk.Button(grabber_actions, text="Save Tool 6 Settings", bg="#0d1b2a", fg="#ffffff",
@@ -2806,6 +2908,9 @@ class MainApp:
         username = self.grabber_user_entry.get().strip()
         password = self.grabber_pass_entry.get()
         reconciliation_url = self.grabber_reconciliation_url_entry.get().strip()
+        refresh_seconds = self.grabber_refresh_seconds_entry.get().strip() if hasattr(self, "grabber_refresh_seconds_entry") else "5"
+        sound_enabled = bool(self.grabber_sound_enabled_var.get()) if hasattr(self, "grabber_sound_enabled_var") else True
+        sound_path = self.grabber_sound_path_entry.get().strip() if hasattr(self, "grabber_sound_path_entry") else ""
         if not login_url.startswith(("https://", "http://")) or not reconciliation_url.startswith(("https://", "http://")):
             messagebox.showwarning("Invalid URL", "Enter complete https:// login and reconciliation URLs for Tool 6.")
             return
@@ -2826,6 +2931,9 @@ class MainApp:
                     data_grabber_login_url=login_url,
                     data_grabber_user=username,
                     data_grabber_reconciliation_url=reconciliation_url,
+                    data_grabber_refresh_seconds=refresh_seconds,
+                    data_grabber_sound_enabled=sound_enabled,
+                    data_grabber_sound_path=sound_path,
                 ))
             except Exception:
                 saved_config = False
@@ -2847,6 +2955,9 @@ class MainApp:
                 data["data_grabber_login_url"] = login_url
                 data["data_grabber_user"] = username
                 data["data_grabber_reconciliation_url"] = reconciliation_url
+                data["data_grabber_refresh_seconds"] = refresh_seconds
+                data["data_grabber_sound_enabled"] = sound_enabled
+                data["data_grabber_sound_path"] = sound_path
                 cfg_path.write_text(json.dumps(data, indent=4), encoding="utf-8")
                 saved_config = True
             except Exception as exc:
@@ -2855,8 +2966,28 @@ class MainApp:
         self.grabber_status_pill.config(text="● Configured", fg=AURORA_MINT)
         self.grabber_msg_lbl.config(text="✓ Tool 6 settings saved securely!", fg=AURORA_MINT)
         if self.tool6_app is not None:
-            self.tool6_app.set_connection_settings(login_url, username, password, reconciliation_url)
+            self.tool6_app.set_connection_settings(
+                login_url, username, password, reconciliation_url, refresh_seconds, sound_enabled, sound_path
+            )
         self.root.after(3500, lambda: self.grabber_msg_lbl.config(text="") if self.grabber_msg_lbl.winfo_exists() else None)
+
+    def _browse_grabber_sound(self):
+        filename = filedialog.askopenfilename(
+            title="Select Pending Notification Sound",
+            filetypes=[("Audio Files", "*.mp3 *.wav *.wma *.ogg"), ("All Files", "*.*")],
+        )
+        if filename:
+            if hasattr(self, "grabber_sound_path_entry"):
+                self.grabber_sound_path_entry.delete(0, tk.END)
+                self.grabber_sound_path_entry.insert(0, filename)
+
+    def _test_grabber_sound(self):
+        try:
+            from website_data_grabber import play_notification_sound
+            custom_path = self.grabber_sound_path_entry.get().strip() if hasattr(self, "grabber_sound_path_entry") else ""
+            play_notification_sound(custom_path or None)
+        except Exception as exc:
+            messagebox.showwarning("Sound Test", f"Could not play notification sound: {exc}")
 
     def _clear_data_grabber_credentials(self):
         if not messagebox.askyesno("Clear Tool 6 credentials", "Remove the saved Tool 6 username and password from this computer?"):

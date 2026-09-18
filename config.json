@@ -11,5 +11,8 @@
     "auditship_fork_id": "LPAKASHM",
     "data_grabber_login_url": "https://active.efl3plofc.com/login",
     "data_grabber_user": "lka-3plcssops5@efl.global",
-    "data_grabber_reconciliation_url": "https://active.efl3plofc.com/clerk-dashboard?job_type=OUTBOUND"
+    "data_grabber_reconciliation_url": "https://active.efl3plofc.com/clerk-dashboard?job_type=OUTBOUND",
+    "data_grabber_refresh_seconds": "0",
+    "data_grabber_sound_enabled": "True",
+    "data_grabber_sound_path": ""
 }

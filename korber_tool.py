@@ -255,13 +255,13 @@ class KorberApp:
         body.pack(fill="both", expand=True, padx=18, pady=16)
 
         # --- Tabs: GDN / GRN ---
-        notebook = ttk.Notebook(body)
-        notebook.pack(fill="both", expand=True)
+        self.notebook = ttk.Notebook(body)
+        self.notebook.pack(fill="both", expand=True)
 
-        gdn_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
-        grn_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
-        notebook.add(gdn_tab, text="  GDN  ")
-        notebook.add(grn_tab, text="  GRN  ")
+        gdn_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=18)
+        grn_tab = ttk.Frame(self.notebook, style="Card.TFrame", padding=18)
+        self.notebook.add(gdn_tab, text="  GDN  ")
+        self.notebook.add(grn_tab, text="  GRN  ")
 
         # --- GDN tab ---
         gdn_tab.columnconfigure(1, weight=1)
@@ -437,6 +437,68 @@ class KorberApp:
         self.grn_gatepass_entry.delete(0, tk.END)
         self.set_status("Fields cleared")
 
+    def prefill_gdn(
+        self,
+        warehouse: str = "",
+        client: str = "",
+        gatepass: str = "",
+        delivery_location: str = "",
+        seal: str = "",
+    ) -> None:
+        """Prefill GDN fields and select the GDN tab."""
+        if hasattr(self, "notebook"):
+            self.notebook.select(0)
+        if warehouse and hasattr(self, "warehouse_entry"):
+            vals = list(self.warehouse_entry.cget("values") or [])
+            matched = next((v for v in vals if v.strip().casefold() == warehouse.strip().casefold()), None)
+            if not matched:
+                matched = next((v for v in vals if v.strip().casefold() in warehouse.strip().casefold() or warehouse.strip().casefold() in v.strip().casefold()), warehouse)
+            self.warehouse_entry.set(matched)
+        if hasattr(self, "client_entry"):
+            self.client_entry.delete(0, tk.END)
+            if client:
+                self.client_entry.insert(0, client)
+        if hasattr(self, "gatepass_entry"):
+            self.gatepass_entry.delete(0, tk.END)
+            if gatepass:
+                self.gatepass_entry.insert(0, gatepass)
+        if hasattr(self, "delivery_entry"):
+            self.delivery_entry.delete(0, tk.END)
+            deliv_text = str(delivery_location or "").strip()
+            if not deliv_text or deliv_text == "-":
+                deliv_text = "N/A"
+            self.delivery_entry.insert(0, deliv_text)
+        if hasattr(self, "seal_entry"):
+            self.seal_entry.delete(0, tk.END)
+            seal_text = str(seal or "").strip()
+            if not seal_text or seal_text == "-":
+                seal_text = "N/A"
+            self.seal_entry.insert(0, seal_text)
+        parts = [f"GP={gatepass}"] if gatepass else []
+        if warehouse: parts.append(f"WH={warehouse}")
+        if client: parts.append(f"Client={client}")
+        desc = f" ({', '.join(parts)})" if parts else ""
+        self.set_status(f"Prefilled GDN fields from Pending Jobs{desc}")
+
+    def prefill_grn(self, warehouse: str = "", gatepass: str = "") -> None:
+        """Prefill GRN fields and select the GRN tab."""
+        if hasattr(self, "notebook"):
+            self.notebook.select(1)
+        if warehouse and hasattr(self, "grn_warehouse_entry"):
+            vals = list(self.grn_warehouse_entry.cget("values") or [])
+            matched = next((v for v in vals if v.strip().casefold() == warehouse.strip().casefold()), None)
+            if not matched:
+                matched = next((v for v in vals if v.strip().casefold() in warehouse.strip().casefold() or warehouse.strip().casefold() in v.strip().casefold()), warehouse)
+            self.grn_warehouse_entry.set(matched)
+        if hasattr(self, "grn_gatepass_entry"):
+            self.grn_gatepass_entry.delete(0, tk.END)
+            if gatepass:
+                self.grn_gatepass_entry.insert(0, gatepass)
+        parts = [f"GP={gatepass}"] if gatepass else []
+        if warehouse: parts.append(f"WH={warehouse}")
+        desc = f" ({', '.join(parts)})" if parts else ""
+        self.set_status(f"Prefilled GRN fields from Pending Jobs{desc}")
+
     def set_status(self, text):
         self.status_var.set(text)
         self.root.update_idletasks()
@@ -600,7 +662,15 @@ class KorberApp:
             client_code = self.client_entry.get().strip()
             gate_pass_number = self.gatepass_entry.get().strip()
             delivery_location = self.delivery_entry.get().strip()
+            if not delivery_location or delivery_location == "-":
+                delivery_location = "N/A"
+                self.delivery_entry.delete(0, tk.END)
+                self.delivery_entry.insert(0, "N/A")
             seal_number = self.seal_entry.get().strip()
+            if not seal_number or seal_number == "-":
+                seal_number = "N/A"
+                self.seal_entry.delete(0, tk.END)
+                self.seal_entry.insert(0, "N/A")
 
             if not all([warehouse_id, client_code, gate_pass_number, delivery_location, seal_number]):
                 messagebox.showwarning("Missing info", "Please fill in all five GDN fields first.")
@@ -640,7 +710,15 @@ class KorberApp:
             client_code = self.client_entry.get().strip()
             gate_pass_number = self.gatepass_entry.get().strip()
             delivery_location = self.delivery_entry.get().strip()
+            if not delivery_location or delivery_location == "-":
+                delivery_location = "N/A"
+                self.delivery_entry.delete(0, tk.END)
+                self.delivery_entry.insert(0, "N/A")
             seal_number = self.seal_entry.get().strip()
+            if not seal_number or seal_number == "-":
+                seal_number = "N/A"
+                self.seal_entry.delete(0, tk.END)
+                self.seal_entry.insert(0, "N/A")
 
             if not all([warehouse_id, client_code, gate_pass_number, delivery_location, seal_number]):
                 messagebox.showwarning("Missing info", "Please fill in all five GDN fields first.")
@@ -2436,6 +2514,10 @@ def fill_delivery_location(driver, delivery_location: str):
       explicitly blur (Tab) and then read the value back to confirm it
       actually stuck, retrying once if something else overwrote it.
     """
+    deliv_val = str(delivery_location or "").strip()
+    if not deliv_val or deliv_val == "-":
+        deliv_val = "N/A"
+
     from selenium.webdriver.common.keys import Keys
 
     wait = WebDriverWait(driver, 20)
@@ -2449,7 +2531,7 @@ def fill_delivery_location(driver, delivery_location: str):
 
     def _type_and_blur():
         delivery_input.clear()
-        delivery_input.send_keys(delivery_location)
+        delivery_input.send_keys(deliv_val)
         delivery_input.send_keys(Keys.TAB)  # triggers blur -> trimValueOnChange
 
     _type_and_blur()
@@ -2458,14 +2540,14 @@ def fill_delivery_location(driver, delivery_location: str):
     # async default-population from Client Code) overwrote it.
     time.sleep(0.5)
     current_value = delivery_input.get_attribute("value")
-    if current_value.strip() != delivery_location.strip():
+    if current_value.strip() != deliv_val:
         _type_and_blur()
         time.sleep(0.5)
         current_value = delivery_input.get_attribute("value")
-        if current_value.strip() != delivery_location.strip():
+        if current_value.strip() != deliv_val:
             raise Exception(
                 f"Delivery To field shows '{current_value}' after typing "
-                f"'{delivery_location}' twice — something on the page is "
+                f"'{deliv_val}' twice — something on the page is "
                 f"overwriting it (possibly an auto-populated default)."
             )
 
@@ -2480,6 +2562,10 @@ def fill_seal_number(driver, seal_number: str):
     rather than the simpler clear()/send_keys() used for Gate Pass Number,
     since we don't yet know whether this field is also subject to an
     async overwrite the way Delivery To was."""
+    seal_val = str(seal_number or "").strip()
+    if not seal_val or seal_val == "-":
+        seal_val = "N/A"
+
     from selenium.webdriver.common.keys import Keys
 
     wait = WebDriverWait(driver, 20)
@@ -2493,21 +2579,21 @@ def fill_seal_number(driver, seal_number: str):
 
     def _type_and_blur():
         seal_input.clear()
-        seal_input.send_keys(seal_number)
+        seal_input.send_keys(seal_val)
         seal_input.send_keys(Keys.TAB)  # triggers blur -> trimValueOnChange
 
     _type_and_blur()
 
     time.sleep(0.5)
     current_value = seal_input.get_attribute("value")
-    if current_value.strip() != seal_number.strip():
+    if current_value.strip() != seal_val:
         _type_and_blur()
         time.sleep(0.5)
         current_value = seal_input.get_attribute("value")
-        if current_value.strip() != seal_number.strip():
+        if current_value.strip() != seal_val:
             raise Exception(
                 f"Seal No field shows '{current_value}' after typing "
-                f"'{seal_number}' twice — something on the page is "
+                f"'{seal_val}' twice — something on the page is "
                 f"overwriting it."
             )
 
