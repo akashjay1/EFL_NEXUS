@@ -160,6 +160,62 @@ def _download_event_file() -> Path:
     return base / "EFL_NEXUS" / "website_grabber_downloads.json"
 
 
+def _job_map_file() -> Path:
+    """Return the persistent job mapping file that remembers warf_id -> job details across sessions."""
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "EFL_NEXUS" / "website_grabber_job_map.json"
+
+
+def load_persisted_job_map(custom_path: Path | None = None) -> dict[str, dict[str, str]]:
+    """Load persistent dictionary mapping job_id and warf_id to job records."""
+    p = custom_path or _job_map_file()
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception:
+        pass
+    return {}
+
+
+def update_persisted_job_map(records: list[dict[str, Any]], custom_path: Path | None = None) -> None:
+    """Persist job metadata across sessions so warf_id routes map to real job identifiers."""
+    if not records:
+        return
+    p = custom_path or _job_map_file()
+    existing = load_persisted_job_map(p)
+    changed = False
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        jid = str(r.get("job_id") or "").strip()
+        wid = str(r.get("warf_id") or "").strip()
+        gp = str(r.get("gatepass") or "").strip()
+        cli = str(r.get("client") or "").strip()
+        item = {
+            "job_id": jid,
+            "warf_id": wid,
+            "gatepass": gp,
+            "client": cli,
+            "status": str(r.get("status") or "").strip(),
+            "warehouse": str(r.get("warehouse") or "").strip(),
+        }
+        if jid:
+            existing[jid.casefold()] = item
+            changed = True
+        if wid:
+            existing[wid.casefold()] = item
+            changed = True
+    if changed:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+
 def get_downloads_folder() -> Path:
     """Return the user's standard Windows Downloads directory."""
     if sys.platform == "win32":
@@ -178,6 +234,72 @@ def get_downloads_folder() -> Path:
     fallback = Path.home() / "Downloads"
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
+
+
+def get_job_download_folder(
+    job_id: str = "",
+    gatepass: str = "",
+    client: str = "",
+    base_folder: Path | None = None,
+) -> Path:
+    """Return the destination subfolder under the Downloads directory for a job.
+
+    Naming format: {job_id}_{gatepass}_{client}
+    Example: OUT_0000007081_728069_KTI
+    Gracefully falls back when gatepass or client is missing, or falls back
+    to base_downloads if no job ID is specified.
+    """
+    base_downloads = base_folder or get_downloads_folder()
+
+    def _clean_component(val: Any) -> str:
+        s = str(val or "").strip()
+        # Remove characters forbidden in Windows directories: < > : " / \\ | ? * and control chars
+        s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", s)
+        # Collapse whitespace and repeated underscores
+        s = re.sub(r"\s+", "_", s)
+        s = re.sub(r"_+", "_", s)
+        # Strip leading/trailing dots, spaces, underscores
+        s = s.strip(" ._")
+        return s
+
+    clean_job = _clean_component(job_id)
+    clean_gp = _clean_component(gatepass)
+    clean_client = _clean_component(client)
+
+    # If clean_job is purely numeric (e.g. portal route 16561), attempt resolution from job map
+    if clean_job and re.fullmatch(r"\d+", clean_job):
+        job_map = load_persisted_job_map()
+        mapped = job_map.get(clean_job.casefold())
+        if mapped:
+            real_j = _clean_component(mapped.get("job_id", ""))
+            if real_j and not re.fullmatch(r"\d+", real_j):
+                clean_job = real_j
+            if not clean_gp or clean_gp.upper() in ("NA", "N_A", "NONE", "-", "_"):
+                clean_gp = _clean_component(mapped.get("gatepass", ""))
+            if not clean_client or clean_client.upper() in ("NA", "N_A", "NONE", "-", "_"):
+                clean_client = _clean_component(mapped.get("client", ""))
+
+    parts: list[str] = []
+    if clean_job:
+        if re.fullmatch(r"\d+", clean_job) and not clean_gp and not clean_client:
+            parts.append(f"JOB_{clean_job}")
+        else:
+            parts.append(clean_job)
+
+    if clean_gp and clean_gp.upper() not in ("NA", "N_A", "NONE", "-", "_"):
+        parts.append(clean_gp)
+
+    if clean_client and clean_client.upper() not in ("NA", "N_A", "NONE", "-", "_"):
+        parts.append(clean_client)
+
+    if parts:
+        folder_name = "_".join(parts)
+        target_dir = base_downloads / folder_name
+    else:
+        target_dir = base_downloads
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir
 
 
 def get_unique_download_path(filename: str, folder: Path | None = None) -> Path:
@@ -223,6 +345,10 @@ class ResultsBridge:
     def __init__(self, cmd_path: Path, result_path: Path | None = None):
         self.cmd_path = cmd_path
         self.result_path = result_path
+        self._known_records: dict[str, dict[str, str]] = {}
+        for k, v in load_persisted_job_map().items():
+            if isinstance(v, dict):
+                self._known_records[k.casefold()] = v
 
     def save_job_ids(self, values):
         records: list[dict[str, str]] = []
@@ -237,6 +363,7 @@ class ResultsBridge:
                 raw_gp = _clean(str(item.get("gatepass", "")))
                 raw_seal = _clean(str(item.get("seal", "")))
                 raw_deliv = _clean(str(item.get("delivery_location", "")))
+                raw_warf = _clean(str(item.get("warf_id", "")))
             else:
                 raw_id = _clean(str(item))
                 raw_client = ""
@@ -245,6 +372,7 @@ class ResultsBridge:
                 raw_gp = ""
                 raw_seal = ""
                 raw_deliv = ""
+                raw_warf = ""
             if not raw_id:
                 continue
             key = raw_id.casefold()
@@ -252,7 +380,7 @@ class ResultsBridge:
                 continue
             seen.add(key)
             norm_status = normalize_reconciliation_status(raw_status)
-            records.append({
+            rec = {
                 "job_id": raw_id,
                 "client": raw_client,
                 "status": norm_status,
@@ -260,11 +388,66 @@ class ResultsBridge:
                 "gatepass": raw_gp,
                 "seal": raw_seal,
                 "delivery_location": raw_deliv,
-            })
+                "warf_id": raw_warf,
+            }
+            records.append(rec)
+            self._known_records[key] = rec
+            if raw_warf:
+                self._known_records[raw_warf.casefold()] = rec
             unique_ids.append(raw_id)
         if self.result_path:
             _write_results(self.result_path, unique_ids, records)
+        update_persisted_job_map(records)
         return {"count": len(unique_ids)}
+
+    def _lookup_job_record(self, key_or_id: str) -> dict[str, str] | None:
+        """Lookup full record by Job ID or numeric Warf ID from memory or disk cache."""
+        if not key_or_id:
+            return None
+        target = str(key_or_id).strip().casefold()
+        if target in self._known_records:
+            return self._known_records[target]
+        persisted = load_persisted_job_map()
+        if target in persisted:
+            self._known_records[target] = persisted[target]
+            return persisted[target]
+        for path_candidate in (self.result_path, _result_file()):
+            if path_candidate and path_candidate.exists():
+                try:
+                    payload = json.loads(path_candidate.read_text(encoding="utf-8"))
+                    recs = payload.get("records")
+                    if isinstance(recs, list):
+                        for r in recs:
+                            if isinstance(r, dict):
+                                jid = str(r.get("job_id") or "").strip().casefold()
+                                wid = str(r.get("warf_id") or "").strip().casefold()
+                                if jid:
+                                    self._known_records[jid] = r
+                                if wid:
+                                    self._known_records[wid] = r
+                                if target and (target == jid or target == wid):
+                                    return r
+                except Exception:
+                    pass
+        return None
+
+    def lookup_warf_job(self, warf_id: str) -> dict[str, str]:
+        """Allow the browser JavaScript to resolve job context for a warf route."""
+        rec = self._lookup_job_record(warf_id)
+        if rec:
+            return {
+                "job_id": str(rec.get("job_id") or "").strip(),
+                "gatepass": str(rec.get("gatepass") or "").strip(),
+                "client": str(rec.get("client") or "").strip(),
+            }
+        return {"job_id": "", "gatepass": "", "client": ""}
+
+    def _lookup_job_metadata(self, job_id: str) -> tuple[str, str]:
+        """Return (gatepass, client) for the given job_id from memory or disk cache."""
+        rec = self._lookup_job_record(job_id)
+        if rec:
+            return (str(rec.get("gatepass") or "").strip(), str(rec.get("client") or "").strip())
+        return ("", "")
 
     def save_downloaded_file(self, payload: dict[str, Any]) -> dict[str, Any]:
         import base64
@@ -273,18 +456,9 @@ class ResultsBridge:
             raw_filename = str(payload.get("filename") or "").strip()
             b64_data = payload.get("data") or ""
             url = str(payload.get("url") or "")
-            job_id = str(payload.get("job_id") or "")
-
-            if not raw_filename or raw_filename.lower() in ("download", "file", ""):
-                if url:
-                    parsed = unquote(urlparse(url).path.split("/")[-1])
-                    if parsed:
-                        raw_filename = parsed
-            if not raw_filename:
-                raw_filename = f"job_{job_id}_file.xlsx" if job_id else "downloaded_file"
-
-            raw_filename = raw_filename.split("?")[0].split("#")[0].strip()
-            target_path = get_unique_download_path(raw_filename)
+            raw_job_id = str(payload.get("job_id") or "").strip()
+            gatepass = str(payload.get("gatepass") or "").strip()
+            client = str(payload.get("client") or "").strip()
 
             if isinstance(b64_data, str):
                 if "," in b64_data:
@@ -295,6 +469,55 @@ class ResultsBridge:
             else:
                 return {"success": False, "error": "Invalid data format"}
 
+            job_id = raw_job_id
+            rec = self._lookup_job_record(raw_job_id)
+            if rec:
+                real_job_id = str(rec.get("job_id") or "").strip()
+                if real_job_id:
+                    job_id = real_job_id
+                if not gatepass:
+                    gatepass = str(rec.get("gatepass") or "").strip()
+                if not client:
+                    client = str(rec.get("client") or "").strip()
+            elif job_id and (not gatepass or not client):
+                found_gp, found_cli = self._lookup_job_metadata(job_id)
+                if not gatepass:
+                    gatepass = found_gp
+                if not client:
+                    client = found_cli
+
+            # Intelligent fallback: inspect Excel metadata if job_id is still numeric or gatepass/client missing
+            if (not gatepass or not client or re.fullmatch(r"\d+", job_id)) and file_bytes and file_bytes.startswith(b"PK\x03\x04"):
+                try:
+                    import io, openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+                    ws = wb.active
+                    r_iter = ws.iter_rows(values_only=True)
+                    hdr = [str(h or "").strip().lower() for h in next(r_iter, [])]
+                    first_row = next(r_iter, None)
+                    if first_row:
+                        r_vals = [str(v or "").strip() for v in first_row]
+                        gp_idx = next((i for i, h in enumerate(hdr) if "gate" in h and "pass" in h), None)
+                        if gp_idx is not None and gp_idx < len(r_vals) and not gatepass:
+                            gatepass = r_vals[gp_idx]
+                        cli_idx = next((i for i, h in enumerate(hdr) if any(k in h for k in ("cust", "client", "customer"))), None)
+                        if cli_idx is not None and cli_idx < len(r_vals) and not client:
+                            client = r_vals[cli_idx]
+                except Exception:
+                    pass
+
+            target_folder = get_job_download_folder(job_id=job_id, gatepass=gatepass, client=client)
+
+            if not raw_filename or raw_filename.lower() in ("download", "file", ""):
+                if url:
+                    parsed = unquote(urlparse(url).path.split("/")[-1])
+                    if parsed:
+                        raw_filename = parsed
+            if not raw_filename:
+                raw_filename = f"job_{job_id}_file.xlsx" if job_id else "downloaded_file"
+
+            raw_filename = raw_filename.split("?")[0].split("#")[0].strip()
+            target_path = get_unique_download_path(raw_filename, folder=target_folder)
             target_path.write_bytes(file_bytes)
 
             try:
@@ -304,9 +527,13 @@ class ResultsBridge:
                     "action": "file_downloaded",
                     "filename": target_path.name,
                     "path": str(target_path.resolve()),
+                    "folder": target_path.parent.name,
+                    "folder_path": str(target_path.parent.resolve()),
                     "size": len(file_bytes),
                     "time": time.time(),
                     "job_id": job_id,
+                    "gatepass": gatepass,
+                    "client": client,
                 }), encoding="utf-8")
             except Exception:
                 pass
@@ -315,6 +542,8 @@ class ResultsBridge:
                 "success": True,
                 "filename": target_path.name,
                 "path": str(target_path.resolve()),
+                "folder": target_path.parent.name,
+                "folder_path": str(target_path.parent.resolve()),
                 "size": len(file_bytes),
             }
         except Exception as exc:
@@ -452,9 +681,37 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   if (sealColIndex >= 0 && sealColIndex < cells.length && cells[sealColIndex]) {{
                     sealVal = cells[sealColIndex].textContent.trim();
                   }}
-                  let deliveryVal = '';
-                  if (deliveryColIndex >= 0 && deliveryColIndex < cells.length && cells[deliveryColIndex]) {{
-                    deliveryVal = cells[deliveryColIndex].textContent.trim();
+                  let warfId = '';
+                  const warfForm = row.querySelector("form[action*='/warf/start'], a[href*='/warf/start'], form[action*='/warf/'], a[href*='/warf/'], form[action*='/warf']");
+                  if (warfForm) {{
+                    const act = warfForm.getAttribute('action') || warfForm.getAttribute('href') || '';
+                    const m = act.match(/\\/warf\\/(?:start\\/)?(\\d+)/i);
+                    if (m && m[1]) warfId = m[1];
+                  }}
+                  if (warfId && jobVal) {{
+                    try {{
+                      localStorage.setItem('nexus_warf_' + warfId, JSON.stringify({{
+                        job_id: jobVal,
+                        gatepass: gatepassVal,
+                        client: clientVal,
+                      }}));
+                    }} catch (e) {{}}
+                  }}
+                  const startBtn = row.querySelector("button.btn-start, button[type='submit'], form button");
+                  if (startBtn && !startBtn.hasAttribute('data-nexus-bound')) {{
+                    startBtn.setAttribute('data-nexus-bound', '1');
+                    startBtn.addEventListener('click', () => {{
+                      try {{
+                        sessionStorage.setItem('nexus_active_job_id', jobVal);
+                        sessionStorage.setItem('nexus_active_gatepass', gatepassVal);
+                        sessionStorage.setItem('nexus_active_client', clientVal);
+                        sessionStorage.setItem('nexus_active_warf_id', warfId);
+                        localStorage.setItem('nexus_active_job_id', jobVal);
+                        localStorage.setItem('nexus_active_gatepass', gatepassVal);
+                        localStorage.setItem('nexus_active_client', clientVal);
+                        localStorage.setItem('nexus_active_warf_id', warfId);
+                      }} catch (e) {{}}
+                    }});
                   }}
                   values.push({{
                     job_id: jobVal,
@@ -463,7 +720,8 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                     warehouse: whVal,
                     gatepass: gatepassVal,
                     seal: sealVal,
-                    delivery_location: deliveryVal
+                    delivery_location: deliveryVal,
+                    warf_id: warfId
                   }});
                 }}
                 return values;
@@ -679,15 +937,101 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 }}
               }};
 
+              window.__nexusJobContext = window.__nexusJobContext || {{ job_id: '', gatepass: '', client: '' }};
+
               const getCurrentJobId = () => {{
+                if (window.__nexusJobContext && window.__nexusJobContext.job_id) {{
+                  const c = String(window.__nexusJobContext.job_id).trim();
+                  if (!/^\\d+$/.test(c)) return c;
+                }}
+                try {{
+                  // 1. Direct regex on whole page innerText
+                  const bodyText = document.body ? (document.body.innerText || '') : '';
+                  const directMatch = bodyText.match(/\\b((?:OUT|IN)_[A-Za-z0-9_-]+)\\b/i);
+                  if (directMatch && directMatch[1]) {{
+                    return directMatch[1].trim();
+                  }}
+
+                  // 2. Search DOM headings, headers, cards, badges, breadcrumbs, td, th for real Job ID
+                  const candidateElements = [
+                    ...document.querySelectorAll('h1, h2, h3, h4, h5, header, .card-title, [class*="header"], strong, b, .badge, .breadcrumb, div, span, p, td, th')
+                  ];
+                  for (const el of candidateElements) {{
+                    const txt = (el.textContent || '').trim();
+                    const m = txt.match(/Job\\s*ID\\s*[-:]\\s*([A-Za-z0-9_-]+)/i) || txt.match(/Job\\s*(?:No|Number|#)\\s*[-:]\\s*([A-Za-z0-9_-]+)/i);
+                    if (m && m[1] && !/^\\d+$/.test(m[1].trim())) {{
+                      return m[1].trim();
+                    }}
+                  }}
+
+                  // 3. Check sessionStorage and localStorage from row click
+                  const saved = sessionStorage.getItem('nexus_active_job_id') || localStorage.getItem('nexus_active_job_id');
+                  if (saved && !/^\\d+$/.test(saved)) return saved;
+
+                  // 4. If URL has warf route, check if we stored this warfId in localStorage
+                  const m = (location.pathname || '').match(/\\/warf\\/(?:start\\/)?([^\\/?#]+)/i);
+                  if (m && m[1]) {{
+                    const warfData = localStorage.getItem('nexus_warf_' + m[1]);
+                    if (warfData) {{
+                      try {{
+                        const parsed = JSON.parse(warfData);
+                        if (parsed && parsed.job_id && !/^\\d+$/.test(parsed.job_id)) return parsed.job_id;
+                      }} catch (e) {{}}
+                    }}
+                    return m[1];
+                  }}
+                }} catch (e) {{}}
+                return '';
+              }};
+
+              const getCurrentGatepass = () => {{
+                if (window.__nexusJobContext && window.__nexusJobContext.gatepass) {{
+                  return window.__nexusJobContext.gatepass;
+                }}
                 try {{
                   const m = (location.pathname || '').match(/\\/warf\\/(?:start\\/)?([^\\/?#]+)/i);
-                  if (m) return m[1];
-                  const headings = [...document.querySelectorAll('h1, h2, h3, h4, h5')];
-                  for (const h of headings) {{
-                    const hm = (h.textContent || '').match(/Job\\s*ID\\s*[-:]\\s*([A-Za-z0-9_-]+)/i);
-                    if (hm) return hm[1];
+                  if (m && m[1]) {{
+                    const warfData = localStorage.getItem('nexus_warf_' + m[1]);
+                    if (warfData) {{
+                      try {{
+                        const parsed = JSON.parse(warfData);
+                        if (parsed && parsed.gatepass) return parsed.gatepass;
+                      }} catch (e) {{}}
+                    }}
                   }}
+                  const elements = [...document.querySelectorAll('h1, h2, h3, h4, h5, div, span, p, td, tr')];
+                  for (const el of elements) {{
+                    const m = (el.textContent || '').match(/Gate\\s*Pass(?:\\s*No|\\s*ID|\\s*Number)?\\s*[-:]\\s*([A-Za-z0-9_-]+)/i);
+                    if (m && m[1]) return m[1].trim();
+                  }}
+                  const saved = sessionStorage.getItem('nexus_active_gatepass') || localStorage.getItem('nexus_active_gatepass');
+                  if (saved) return saved;
+                }} catch (e) {{}}
+                return '';
+              }};
+
+              const getCurrentClient = () => {{
+                if (window.__nexusJobContext && window.__nexusJobContext.client) {{
+                  return window.__nexusJobContext.client;
+                }}
+                try {{
+                  const m = (location.pathname || '').match(/\\/warf\\/(?:start\\/)?([^\\/?#]+)/i);
+                  if (m && m[1]) {{
+                    const warfData = localStorage.getItem('nexus_warf_' + m[1]);
+                    if (warfData) {{
+                      try {{
+                        const parsed = JSON.parse(warfData);
+                        if (parsed && parsed.client) return parsed.client;
+                      }} catch (e) {{}}
+                    }}
+                  }}
+                  const elements = [...document.querySelectorAll('h1, h2, h3, h4, h5, div, span, p, td, tr')];
+                  for (const el of elements) {{
+                    const m = (el.textContent || '').match(/(?:Client|Customer)(?:\\s*Name)?\\s*[-:]\\s*([A-Za-z0-9_-]+)/i);
+                    if (m && m[1]) return m[1].trim();
+                  }}
+                  const saved = sessionStorage.getItem('nexus_active_client') || localStorage.getItem('nexus_active_client');
+                  if (saved) return saved;
                 }} catch (e) {{}}
                 return '';
               }};
@@ -749,16 +1093,32 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                     reader.onloadend = async () => {{
                       try {{
                         const base64Data = reader.result;
+                        let activeJob = getCurrentJobId();
+                        let activeGp = getCurrentGatepass();
+                        let activeCli = getCurrentClient();
+                        if (/^\\d+$/.test(activeJob) && window.pywebview && window.pywebview.api && typeof window.pywebview.api.lookup_warf_job === 'function') {{
+                          try {{
+                            const mapped = await window.pywebview.api.lookup_warf_job(activeJob);
+                            if (mapped && mapped.job_id) {{
+                              activeJob = mapped.job_id;
+                              if (!activeGp) activeGp = mapped.gatepass || '';
+                              if (!activeCli) activeCli = mapped.client || '';
+                            }}
+                          }} catch (e) {{}}
+                        }}
                         const result = await window.pywebview.api.save_downloaded_file({{
                           filename: suggestedName || url.split('/').pop().split('?')[0] || 'downloaded_file',
                           data: base64Data,
                           url: url,
-                          job_id: getCurrentJobId(),
+                          job_id: activeJob,
+                          gatepass: activeGp,
+                          client: activeCli,
                         }});
                         if (result && result.success) {{
-                          showDownloadToast('✓ Saved: ' + result.filename + ' to Downloads folder!');
+                          const locName = result.folder ? 'folder ' + result.folder : 'Downloads folder';
+                          showDownloadToast('✓ Saved: ' + result.filename + ' in ' + locName + '!');
                           if (statusEl) statusEl.textContent = '✓ Downloaded';
-                          resolve(true);
+                          resolve(result);
                         }} else {{
                           throw new Error(result && result.error ? result.error : 'Save failed');
                         }}
@@ -909,10 +1269,14 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   allBtn.textContent = '⏳ Downloading (0/' + items.length + ')...';
                 }}
                 let successCount = 0;
+                let lastFolder = '';
                 for (let i = 0; i < items.length; i++) {{
                   if (allBtn) allBtn.textContent = '⏳ Downloading (' + (i + 1) + '/' + items.length + ')...';
-                  const ok = await fetchAndSaveFile(items[i].url, items[i].filename);
-                  if (ok) successCount++;
+                  const res = await fetchAndSaveFile(items[i].url, items[i].filename);
+                  if (res) {{
+                    successCount++;
+                    if (res.folder) lastFolder = res.folder;
+                  }}
                 }}
                 if (allBtn) {{
                   allBtn.disabled = false;
@@ -921,7 +1285,8 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                     allBtn.textContent = '📥 Download All Files';
                   }}, 4000);
                 }}
-                showDownloadToast('✓ Finished: ' + successCount + ' of ' + items.length + ' file(s) saved to Downloads folder!');
+                const destMsg = lastFolder ? 'folder ' + lastFolder : 'Downloads folder';
+                showDownloadToast('✓ Finished: ' + successCount + ' of ' + items.length + ' file(s) saved to ' + destMsg + '!');
               }};
 
               const attachDownloadAllButton = () => {{
@@ -1007,6 +1372,13 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   if (cmd && cmd.action === 'start_job' && cmd.job_id) {{
                     executeStartJob(cmd.job_id);
                   }} else if (cmd && cmd.action === 'download_job_files') {{
+                    if (cmd.job_id) {{
+                      window.__nexusJobContext = {{
+                        job_id: cmd.job_id,
+                        gatepass: cmd.gatepass || '',
+                        client: cmd.client || '',
+                      }};
+                    }}
                     downloadAllJobFiles();
                   }} else if (cmd && cmd.action === 'set_refresh_interval') {{
                     const newSec = Math.max(0, parseInt(cmd.seconds, 10) || 0);
@@ -1500,6 +1872,22 @@ class WebsiteDataGrabberApp:
         )
         self.download_files_btn.pack(side="left", padx=(10, 0))
 
+        self.open_folder_btn = tk.Button(
+            action_bar,
+            text="📂 Open Folder",
+            command=self.open_selected_job_folder,
+            bg="#334155",
+            fg="#ffffff",
+            activebackground="#1e293b",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        )
+        self.open_folder_btn.pack(side="left", padx=(10, 0))
+
     def _on_refresh_interval_changed(self, _event=None):
         if hasattr(self, "refresh_combo"):
             val = self.refresh_combo.get()
@@ -1645,11 +2033,7 @@ class WebsiteDataGrabberApp:
             return
 
         try:
-            if self.result_path.exists():
-                try:
-                    self.result_path.unlink()
-                except Exception:
-                    pass
+            # Preserve self.result_path and persistent cache across restarts
             self.browser_log_path.parent.mkdir(parents=True, exist_ok=True)
             if getattr(sys, "frozen", False):
                 command = [sys.executable, "--internal-browser", str(self.result_path), login_url]
@@ -1815,7 +2199,11 @@ class WebsiteDataGrabberApp:
                 if dl_ts > getattr(self, "_last_download_time", 0.0):
                     self._last_download_time = dl_ts
                     fn = dl_data.get("filename", "")
-                    self.status.set(f"✓ Downloaded '{fn}' (saved to Downloads folder)")
+                    target_folder_name = str(dl_data.get("folder") or "").strip()
+                    if not target_folder_name and dl_data.get("path"):
+                        target_folder_name = Path(dl_data["path"]).parent.name
+                    loc_text = f"folder '{target_folder_name}'" if target_folder_name and target_folder_name.lower() != "downloads" else "Downloads folder"
+                    self.status.set(f"✓ Downloaded '{fn}' (saved to {loc_text})")
         except Exception:
             pass
         if self.browser_process is not None and self.browser_process.poll() is None:
@@ -2291,6 +2679,16 @@ class WebsiteDataGrabberApp:
         if not job_id:
             return
 
+        # Find the full parsed record for this job_id
+        matched_record = next(
+            (r for r in self.records if str(r.get("job_id", "")).strip().casefold() == job_id.casefold()),
+            None,
+        )
+        gatepass = matched_record.get("gatepass", "") if matched_record else ""
+        client = matched_record.get("client", "") if matched_record else ""
+        if not client and len(vals) > 1:
+            client = str(vals[1]).strip()
+
         if self.browser_process is None or self.browser_process.poll() is not None:
             if not getattr(self, "driver", None):
                 if messagebox.askyesno(
@@ -2300,12 +2698,54 @@ class WebsiteDataGrabberApp:
                 ):
                     self.start()
                     self._send_browser_command("start_job", job_id=job_id)
-                    self.root.after(2000, lambda: self._send_browser_command("download_job_files", job_id=job_id))
+                    self.root.after(2000, lambda: self._send_browser_command(
+                        "download_job_files",
+                        job_id=job_id,
+                        gatepass=gatepass,
+                        client=client,
+                    ))
                 return
 
-        sent = self._send_browser_command("download_job_files", job_id=job_id)
+        sent = self._send_browser_command(
+            "download_job_files",
+            job_id=job_id,
+            gatepass=gatepass,
+            client=client,
+        )
         if sent:
-            self.status.set(f"Requested file download for Job ID '{job_id}' in portal browser...")
+            target_sub = get_job_download_folder(job_id, gatepass, client).name
+            self.status.set(f"Requested file download for Job ID '{job_id}' (saving to folder '{target_sub}')...")
+
+    def open_selected_job_folder(self):
+        """Open the target download folder for the currently selected job in Windows Explorer."""
+        selected = self.tree.selection()
+        job_id = ""
+        gatepass = ""
+        client = ""
+        if selected:
+            vals = self.tree.item(selected[0], "values")
+            if vals:
+                job_id = str(vals[0]).strip()
+                matched_record = next(
+                    (r for r in self.records if str(r.get("job_id", "")).strip().casefold() == job_id.casefold()),
+                    None,
+                )
+                if matched_record:
+                    gatepass = matched_record.get("gatepass", "")
+                    client = matched_record.get("client", "")
+                if not client and len(vals) > 1:
+                    client = str(vals[1]).strip()
+
+        target_dir = get_job_download_folder(job_id, gatepass, client)
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(target_dir.resolve()))
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(target_dir.resolve())])
+            self.status.set(f"Opened folder: {target_dir.name}")
+        except Exception as exc:
+            messagebox.showerror("Open Folder Error", f"Could not open directory {target_dir}: {exc}")
 
     def _notify_job_started(self, job_id: str) -> None:
         """Fire the on_job_started callback if configured."""

@@ -1082,6 +1082,34 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
         p3 = get_unique_download_path("Inventory_By_Gate_Pass.xlsx", folder=target_dir)
         self.assertEqual(p3.name, "Inventory_By_Gate_Pass (2).xlsx")
 
+    def test_get_job_download_folder_naming(self):
+        from pathlib import Path
+        from website_data_grabber import get_job_download_folder
+        target_dir = Path(self.tmp_dir.name)
+
+        # Example from user prompt: OUT_0000007081_728069_KTI
+        f1 = get_job_download_folder("OUT_0000007081", "728069", "KTI", base_folder=target_dir)
+        self.assertEqual(f1.name, "OUT_0000007081_728069_KTI")
+        self.assertTrue(f1.is_dir())
+
+        # Sanitization of invalid Windows characters
+        f2 = get_job_download_folder("OUT_0000007081", "728/069", "KTI:ACME", base_folder=target_dir)
+        self.assertEqual(f2.name, "OUT_0000007081_728_069_KTI_ACME")
+        self.assertTrue(f2.is_dir())
+
+        # Missing or placeholder gatepass/client
+        f3 = get_job_download_folder("OUT_0000007081", "N/A", "KTI", base_folder=target_dir)
+        self.assertEqual(f3.name, "OUT_0000007081_KTI")
+        self.assertTrue(f3.is_dir())
+
+        f4 = get_job_download_folder("OUT_0000007081", "", "-", base_folder=target_dir)
+        self.assertEqual(f4.name, "OUT_0000007081")
+        self.assertTrue(f4.is_dir())
+
+        # No job ID falls back to base folder
+        f5 = get_job_download_folder("", "", "", base_folder=target_dir)
+        self.assertEqual(f5, target_dir)
+
     def test_results_bridge_save_downloaded_file_writes_bytes(self):
         import base64
         from pathlib import Path
@@ -1098,14 +1126,78 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
                 "filename": "1789647753_Inventory_By_Gate_Pass (90).xlsx",
                 "data": b64_str,
                 "url": "https://active.efl3plofc.com/mas-active-new/storage/app/public/uploads/1789647753_Inventory_By_Gate_Pass%20(90).xlsx",
-                "job_id": "16697",
+                "job_id": "OUT_0000007081",
+                "gatepass": "728069",
+                "client": "KTI",
             })
 
         self.assertTrue(res.get("success"))
         self.assertEqual(res.get("filename"), "1789647753_Inventory_By_Gate_Pass (90).xlsx")
-        saved_file = test_dir / "1789647753_Inventory_By_Gate_Pass (90).xlsx"
+        self.assertEqual(res.get("folder"), "OUT_0000007081_728069_KTI")
+        saved_file = test_dir / "OUT_0000007081_728069_KTI" / "1789647753_Inventory_By_Gate_Pass (90).xlsx"
         self.assertTrue(saved_file.exists())
         self.assertEqual(saved_file.read_bytes(), raw_bytes)
+
+    def test_results_bridge_metadata_lookup_enrichment(self):
+        import base64
+        from pathlib import Path
+        from website_data_grabber import ResultsBridge
+        test_dir = Path(self.tmp_dir.name)
+        cmd_file = test_dir / "cmd.json"
+        bridge = ResultsBridge(cmd_file)
+
+        # Feed known records to bridge
+        bridge.save_job_ids([{
+            "job_id": "OUT_0000007081",
+            "client": "KTI",
+            "gatepass": "728069",
+            "status": "In Progress",
+        }])
+
+        # Download event that only provided job_id
+        with patch("website_data_grabber.get_downloads_folder", return_value=test_dir):
+            res = bridge.save_downloaded_file({
+                "filename": "evidence.jpg",
+                "data": base64.b64encode(b"image_bytes").decode("ascii"),
+                "job_id": "OUT_0000007081",
+            })
+
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("folder"), "OUT_0000007081_728069_KTI")
+        saved_file = test_dir / "OUT_0000007081_728069_KTI" / "evidence.jpg"
+        self.assertTrue(saved_file.exists())
+
+    def test_results_bridge_resolves_numeric_warf_id_to_real_job_folder(self):
+        import base64
+        from pathlib import Path
+        from website_data_grabber import ResultsBridge
+        test_dir = Path(self.tmp_dir.name)
+        cmd_file = test_dir / "cmd.json"
+        bridge = ResultsBridge(cmd_file)
+
+        # Dashboard table scrape includes warf_id "16812" for job "IN_0000004175"
+        bridge.save_job_ids([{
+            "job_id": "IN_0000004175",
+            "client": "EMJ",
+            "gatepass": "728083",
+            "status": "In Progress",
+            "warf_id": "16812",
+        }])
+
+        # Download event occurs on /warf/start/16812 page where only numeric ID "16812" was captured
+        with patch("website_data_grabber.get_downloads_folder", return_value=test_dir):
+            res = bridge.save_downloaded_file({
+                "filename": "Inventory_By_Gate_Pass.xlsx",
+                "data": base64.b64encode(b"content").decode("ascii"),
+                "job_id": "16812",
+            })
+
+        self.assertTrue(res.get("success"))
+        # Folder must NOT be "16812" - it must be the resolved real job folder
+        self.assertEqual(res.get("folder"), "IN_0000004175_728083_EMJ")
+        saved_file = test_dir / "IN_0000004175_728083_EMJ" / "Inventory_By_Gate_Pass.xlsx"
+        self.assertTrue(saved_file.exists())
+        self.assertFalse((test_dir / "16812").exists())
 
     def test_results_bridge_save_downloaded_file_handles_invalid_data(self):
         from pathlib import Path
@@ -1134,26 +1226,38 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
             bridge.save_downloaded_file({
                 "filename": "test.xlsx",
                 "data": base64.b64encode(b"test").decode("ascii"),
-                "job_id": "16697",
+                "job_id": "OUT_0000007081",
+                "gatepass": "728069",
+                "client": "KTI",
             })
 
         self.assertTrue(dl_event_file.exists())
         event_data = json.loads(dl_event_file.read_text(encoding="utf-8"))
         self.assertEqual(event_data.get("action"), "file_downloaded")
         self.assertEqual(event_data.get("filename"), "test.xlsx")
-        self.assertEqual(event_data.get("job_id"), "16697")
+        self.assertEqual(event_data.get("job_id"), "OUT_0000007081")
+        self.assertEqual(event_data.get("folder"), "OUT_0000007081_728069_KTI")
 
-    def test_download_files_btn_exists_in_ui(self):
+    def test_download_and_open_folder_btns_exist_in_ui(self):
         app = WebsiteDataGrabberApp(self.root, config_store=None)
         self.assertTrue(hasattr(app, "download_files_btn"))
         self.assertEqual(app.download_files_btn.cget("text"), "📥 Download Files")
         self.assertEqual(app.download_files_btn.cget("bg"), "#0284c7")
 
+        self.assertTrue(hasattr(app, "open_folder_btn"))
+        self.assertEqual(app.open_folder_btn.cget("text"), "📂 Open Folder")
+        self.assertEqual(app.open_folder_btn.cget("bg"), "#334155")
+
     def test_download_selected_job_files_dispatches_ipc_command(self):
         import json
         from website_data_grabber import _command_file
         app = WebsiteDataGrabberApp(self.root, config_store=None)
-        records = [{"job_id": "OUT_0000007024", "status": "In Progress"}]
+        records = [{
+            "job_id": "OUT_0000007081",
+            "client": "KTI",
+            "gatepass": "728069",
+            "status": "In Progress",
+        }]
         app._show_results(records)
 
         children = app.tree.get_children()
@@ -1169,8 +1273,11 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
             self.assertTrue(cmd_file.exists())
             payload = json.loads(cmd_file.read_text(encoding="utf-8"))
             self.assertEqual(payload.get("action"), "download_job_files")
-            self.assertEqual(payload.get("job_id"), "OUT_0000007024")
-            self.assertIn("Requested file download for Job ID 'OUT_0000007024'", app.status.get())
+            self.assertEqual(payload.get("job_id"), "OUT_0000007081")
+            self.assertEqual(payload.get("gatepass"), "728069")
+            self.assertEqual(payload.get("client"), "KTI")
+            self.assertIn("OUT_0000007081", app.status.get())
+            self.assertIn("OUT_0000007081_728069_KTI", app.status.get())
         finally:
             cmd_file.unlink(missing_ok=True)
 
@@ -1189,6 +1296,7 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
         dl_event_file.write_text(json.dumps({
             "action": "file_downloaded",
             "filename": "1789647753_Inventory_By_Gate_Pass (90).xlsx",
+            "folder": "OUT_0000007081_728069_KTI",
             "time": 9999999999.0,
         }), encoding="utf-8")
 
@@ -1199,7 +1307,74 @@ class WebsiteDataGrabberDownloadTests(unittest.TestCase):
             app._poll_internal_browser_results()
 
         self.assertIn("1789647753_Inventory_By_Gate_Pass (90).xlsx", app.status.get())
-        self.assertIn("saved to Downloads folder", app.status.get())
+        self.assertIn("saved to folder 'OUT_0000007081_728069_KTI'", app.status.get())
+
+    def test_get_job_download_folder_resolves_numeric_warf_from_persisted_map(self):
+        from pathlib import Path
+        from website_data_grabber import get_job_download_folder, update_persisted_job_map
+        test_dir = Path(self.tmp_dir.name)
+        map_file = test_dir / "job_map.json"
+
+        update_persisted_job_map([{
+            "job_id": "OUT_0000006969",
+            "warf_id": "16561",
+            "client": "ACME",
+            "gatepass": "TEST",
+        }], custom_path=map_file)
+
+        with patch("website_data_grabber._job_map_file", return_value=map_file):
+            folder = get_job_download_folder(job_id="16561", base_folder=test_dir)
+            self.assertEqual(folder.name, "OUT_0000006969_TEST_ACME")
+            self.assertFalse((test_dir / "16561").exists())
+
+    def test_results_bridge_lookup_warf_job(self):
+        from pathlib import Path
+        from website_data_grabber import ResultsBridge, update_persisted_job_map
+        test_dir = Path(self.tmp_dir.name)
+        map_file = test_dir / "job_map.json"
+
+        update_persisted_job_map([{
+            "job_id": "OUT_0000006969",
+            "warf_id": "16561",
+            "client": "ACME",
+            "gatepass": "TEST",
+        }], custom_path=map_file)
+
+        with patch("website_data_grabber._job_map_file", return_value=map_file):
+            bridge = ResultsBridge(test_dir / "cmd.json")
+            res = bridge.lookup_warf_job("16561")
+            self.assertEqual(res.get("job_id"), "OUT_0000006969")
+            self.assertEqual(res.get("client"), "ACME")
+            self.assertEqual(res.get("gatepass"), "TEST")
+
+    def test_results_bridge_save_downloaded_file_resolves_16561_to_real_folder(self):
+        import base64
+        from pathlib import Path
+        from website_data_grabber import ResultsBridge, update_persisted_job_map
+        test_dir = Path(self.tmp_dir.name)
+        map_file = test_dir / "job_map.json"
+
+        update_persisted_job_map([{
+            "job_id": "OUT_0000006969",
+            "warf_id": "16561",
+            "client": "ACME",
+            "gatepass": "TEST",
+        }], custom_path=map_file)
+
+        with patch("website_data_grabber._job_map_file", return_value=map_file), \
+             patch("website_data_grabber.get_downloads_folder", return_value=test_dir):
+            bridge = ResultsBridge(test_dir / "cmd.json")
+            res = bridge.save_downloaded_file({
+                "filename": "Loading_History_Report.xlsx",
+                "data": base64.b64encode(b"report_content").decode("ascii"),
+                "job_id": "16561",
+            })
+
+            self.assertTrue(res.get("success"))
+            self.assertEqual(res.get("folder"), "OUT_0000006969_TEST_ACME")
+            self.assertFalse((test_dir / "16561").exists())
+            self.assertTrue((test_dir / "OUT_0000006969_TEST_ACME" / "Loading_History_Report.xlsx").exists())
+
 
 
 
