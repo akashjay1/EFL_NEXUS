@@ -78,6 +78,8 @@ class WebsiteDataGrabberResilienceTests(unittest.TestCase):
 
             app = WebsiteDataGrabberApp(self.root, config_store=None)
             app.result_path = target
+            app.browser_process = Mock(poll=Mock(return_value=None))
+            app._live_result_baseline_mtime_ns = 0
             app._poll_internal_browser_results()
 
             self.assertEqual(app.job_ids, ["ID-10", "ID-20"])
@@ -172,6 +174,59 @@ class WebsiteDataGrabberResilienceTests(unittest.TestCase):
         self.assertIsNone(app.browser_process)
         self.assertIsNone(app.browser_hwnd)
 
+    def test_internal_browser_sets_zoomable_and_script_contains_zoom_logic(self):
+        import types
+        import subprocess
+        import shutil
+        from website_data_grabber import run_internal_browser
+
+        class Event:
+            def __init__(self):
+                self.callbacks = []
+
+            def __iadd__(self, callback):
+                self.callbacks.append(callback)
+                return self
+
+        class Window:
+            def __init__(self):
+                self.events = types.SimpleNamespace(loaded=Event())
+                self.scripts = []
+
+            def run_js(self, script):
+                self.scripts.append(script)
+
+        window = Window()
+        created_kwargs = {}
+
+        def mock_create_window(*args, **kwargs):
+            created_kwargs.update(kwargs)
+            return window
+
+        fake_webview = types.SimpleNamespace(
+            settings={},
+            create_window=mock_create_window,
+            start=lambda **kwargs: [cb() for cb in window.events.loaded.callbacks],
+        )
+
+        with patch.dict(sys.modules, {"webview": fake_webview}):
+            run_internal_browser(Path(self.tmp_dir.name) / "results.json")
+
+        self.assertTrue(created_kwargs.get("zoomable"))
+        self.assertGreater(len(window.scripts), 0)
+        script = window.scripts[0]
+        self.assertIn("nexus_recon_zoom", script)
+        self.assertIn("applyReconZoom", script)
+        self.assertIn("setReconZoom", script)
+        self.assertIn("0.85", script)
+        self.assertIn("efl-nexus-zoom-widget", script)
+        self.assertIn("efl-nexus-zoom-level", script)
+
+        if shutil.which("node"):
+            check = subprocess.run(["node", "--check"], input=script, text=True, capture_output=True, encoding="utf-8")
+            self.assertEqual(check.returncode, 0, check.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
+

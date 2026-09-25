@@ -160,6 +160,18 @@ def _download_event_file() -> Path:
     return base / "EFL_NEXUS" / "website_grabber_downloads.json"
 
 
+def _loading_history_event_file() -> Path:
+    """Return the IPC file for Loading History requests made on a job-detail page."""
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "EFL_NEXUS" / "website_grabber_loading_history.json"
+
+
+def _loading_history_command_file() -> Path:
+    """Return the IPC command file used to send actions from Tool 6 / reconciliation to Loading History browser."""
+    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return base / "EFL_NEXUS" / "loading_history_command.json"
+
+
 def _job_map_file() -> Path:
     """Return the persistent job mapping file that remembers warf_id -> job details across sessions."""
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
@@ -398,6 +410,11 @@ class ResultsBridge:
         if self.result_path:
             _write_results(self.result_path, unique_ids, records)
         update_persisted_job_map(records)
+        print(f"\n[WebsiteDataGrabber] Bridge received {len(values) if isinstance(values, list) else 0} raw item(s), parsed {len(unique_ids)} unique Job ID(s): {', '.join(unique_ids[:5])}{'...' if len(unique_ids) > 5 else ''}", flush=True)
+        for r in records[:10]:
+            print(f"  [WebsiteDataGrabber] Job: {r.get('job_id')} | Client: {r.get('client', '')} | Gatepass: {r.get('gatepass', '')} | Status: {r.get('status', '')}", flush=True)
+        if len(records) > 10:
+            print(f"  [WebsiteDataGrabber] ... and {len(records) - 10} more jobs.", flush=True)
         return {"count": len(unique_ids)}
 
     def _lookup_job_record(self, key_or_id: str) -> dict[str, str] | None:
@@ -549,6 +566,78 @@ class ResultsBridge:
         except Exception as exc:
             return {"success": False, "error": str(exc)}
 
+    def request_loading_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Pass the current job-detail context to the parent Tool 6 window and Loading History."""
+        try:
+            context = payload if isinstance(payload, dict) else {}
+            event_file = _loading_history_event_file()
+            event_file.parent.mkdir(parents=True, exist_ok=True)
+            jid = _clean(str(context.get("job_id") or ""))
+            gp = _clean(str(context.get("gatepass") or ""))
+            cli = _clean(str(context.get("client") or ""))
+            if not gp and jid:
+                rec = self._lookup_job_record(jid)
+                if rec:
+                    gp = _clean(str(rec.get("gatepass") or ""))
+                    if not cli:
+                        cli = _clean(str(rec.get("client") or ""))
+            if not gp and jid:
+                persisted = load_persisted_job_map()
+                mapped = persisted.get(jid.casefold())
+                if mapped:
+                    gp = _clean(str(mapped.get("gatepass") or ""))
+                    if not cli:
+                        cli = _clean(str(mapped.get("client") or ""))
+            if not gp:
+                try:
+                    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+                    res_file = base / "EFL_NEXUS" / "website_grabber_results.json"
+                    if res_file.exists():
+                        res_data = json.loads(res_file.read_text(encoding="utf-8"))
+                        records = res_data.get("records") if isinstance(res_data, dict) else res_data
+                        if isinstance(records, list):
+                            for item in reversed(records):
+                                item_jid = _clean(str(item.get("job_id") or ""))
+                                item_gp = _clean(str(item.get("gatepass") or ""))
+                                item_cli = _clean(str(item.get("client") or ""))
+                                if (jid and item_jid.casefold() == jid.casefold()) or not jid:
+                                    if not gp and item_gp:
+                                        gp = item_gp
+                                    if not jid and item_jid:
+                                        jid = item_jid
+                                    if not cli and item_cli:
+                                        cli = item_cli
+                                    if gp:
+                                        break
+                except Exception:
+                    pass
+
+            event_file.write_text(json.dumps({
+                "action": "open_loading_history",
+                "time": time.time(),
+                "job_id": jid,
+                "gatepass": gp,
+                "client": cli,
+            }), encoding="utf-8")
+
+            if gp:
+                try:
+                    cmd_file = _loading_history_command_file()
+                    cmd_file.parent.mkdir(parents=True, exist_ok=True)
+                    cmd_file.write_text(json.dumps({
+                        "action": "query_and_export",
+                        "time": time.time(),
+                        "job_id": jid,
+                        "gatepass": gp,
+                        "client": cli,
+                    }), encoding="utf-8")
+                except Exception:
+                    pass
+
+            return {"success": True}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
     def get_pending_command(self):
         try:
             if self.cmd_path.exists():
@@ -592,6 +681,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
         width=1560,
         height=920,
         min_size=(1000, 680),
+        zoomable=True,
     )
 
     def add_extract_button():
@@ -604,11 +694,16 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   const path = (location.pathname || '').toLowerCase();
                   const href = (location.href || '').toLowerCase();
                   if (path.includes('login') || path.includes('/warf/start')) return false;
-                  if (path.includes('clerk-dashboard') || href.includes('clerk-dashboard') || href.includes('job_type=outbound')) return true;
+                  if (path.includes('clerk-dashboard') || href.includes('clerk-dashboard') ||
+                      path.includes('reconciliation') || href.includes('reconciliation') ||
+                      path.includes('dashboard') || href.includes('dashboard') ||
+                      href.includes('job_type=outbound') || href.includes('job_type=') ||
+                      path.includes('pending') || href.includes('pending')) return true;
                   const allTables = [...document.querySelectorAll('table')];
                   return allTables.some(t => {{
                     const txt = (t.textContent || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                    return txt.includes('jobid') || txt.includes('jobnumber') || txt.includes('jobno');
+                    if (txt.includes('jobid') || txt.includes('jobnumber') || txt.includes('jobno')) return true;
+                    return /\b(?:out|in)_[a-z0-9_-]+/i.test(t.textContent || '');
                   }});
                 }} catch (e) {{
                   return false;
@@ -636,7 +731,30 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 let deliveryColIndex = -1;
                 for (const t of allTables) {{
                   const headers = getHeaders(t);
-                  const jIdx = headers.findIndex(h => ['jobid', 'jobnumber', 'jobno', 'job', 'job#'].includes(h) || h.includes('jobid'));
+                  let jIdx = headers.findIndex(h => ['jobid', 'jobnumber', 'jobno', 'job', 'job#'].includes(h) || h.includes('jobid'));
+                  let rows = [...t.querySelectorAll('tbody tr')];
+                  if (!rows.length) {{
+                    const allTrs = [...t.querySelectorAll('tr')];
+                    rows = allTrs.length > 1 ? allTrs.slice(1) : allTrs;
+                  }}
+                  // Resilient fallback: if headers don't clearly state Job ID, inspect cell values for OUT_ or IN_
+                  if (jIdx < 0 && rows.length > 0) {{
+                    const sampleRows = rows.slice(0, 10);
+                    const colMatches = {{}};
+                    sampleRows.forEach(row => {{
+                      const cells = [...row.querySelectorAll('td, th')];
+                      cells.forEach((cell, cIdx) => {{
+                        const val = cell.textContent.trim();
+                        if (/\b(?:OUT|IN)_[A-Za-z0-9_-]+\b/i.test(val)) {{
+                          colMatches[cIdx] = (colMatches[cIdx] || 0) + 1;
+                        }}
+                      }});
+                    }});
+                    const bestCol = Object.entries(colMatches).sort((a, b) => b[1] - a[1])[0];
+                    if (bestCol && bestCol[1] > 0) {{
+                      jIdx = parseInt(bestCol[0], 10);
+                    }}
+                  }}
                   if (jIdx >= 0) {{
                     targetTable = t;
                     jobColIndex = jIdx;
@@ -669,6 +787,10 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   if (statusColIndex >= 0 && statusColIndex < cells.length && cells[statusColIndex]) {{
                     stVal = cells[statusColIndex].textContent.trim();
                   }}
+                  if (!stVal) {{
+                    const statusCell = [...cells].find(cell => /\\b(?:pending|(?:on\\s+|in\\s+)?progress)\\b/i.test(cell.textContent || ''));
+                    if (statusCell) stVal = statusCell.textContent.trim();
+                  }}
                   let whVal = '';
                   if (whColIndex >= 0 && whColIndex < cells.length && cells[whColIndex]) {{
                     whVal = cells[whColIndex].textContent.trim();
@@ -680,6 +802,10 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   let sealVal = '';
                   if (sealColIndex >= 0 && sealColIndex < cells.length && cells[sealColIndex]) {{
                     sealVal = cells[sealColIndex].textContent.trim();
+                  }}
+                  let deliveryVal = '';
+                  if (deliveryColIndex >= 0 && deliveryColIndex < cells.length && cells[deliveryColIndex]) {{
+                    deliveryVal = cells[deliveryColIndex].textContent.trim();
                   }}
                   let warfId = '';
                   const warfForm = row.querySelector("form[action*='/warf/start'], a[href*='/warf/start'], form[action*='/warf/'], a[href*='/warf/'], form[action*='/warf']");
@@ -766,9 +892,69 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               let refreshSeconds = refreshInterval;
               let autoRefreshPaused = refreshInterval <= 0;
 
+              // ---------------- Zoom Control for Full Table View ----------------
+              let reconZoom = parseFloat(localStorage.getItem('nexus_recon_zoom') || '0.85');
+              if (isNaN(reconZoom) || reconZoom < 0.5 || reconZoom > 1.5) {{
+                reconZoom = 0.85;
+              }}
+
+              const applyReconZoom = () => {{
+                try {{
+                  const onRecon = isReconciliationPage();
+                  if (document.body) {{
+                    if (onRecon) {{
+                      document.body.style.setProperty('zoom', reconZoom.toString(), 'important');
+                    }} else if (document.body.style.zoom && document.body.style.zoom !== '1') {{
+                      document.body.style.removeProperty('zoom');
+                    }}
+                  }}
+                  const zoomLabel = document.getElementById('efl-nexus-zoom-level');
+                  if (zoomLabel) {{
+                    zoomLabel.textContent = `${{Math.round(reconZoom * 100)}}%`;
+                  }}
+                  const zoomWidget = document.getElementById('efl-nexus-zoom-widget');
+                  if (zoomWidget) {{
+                    zoomWidget.style.display = onRecon ? 'flex' : 'none';
+                  }}
+                }} catch (e) {{}}
+              }};
+
+              const setReconZoom = (newZoom) => {{
+                reconZoom = Math.min(Math.max(Math.round(newZoom * 100) / 100, 0.5), 1.5);
+                try {{
+                  localStorage.setItem('nexus_recon_zoom', reconZoom.toString());
+                }} catch (e) {{}}
+                applyReconZoom();
+              }};
+
+              window.addEventListener('keydown', (e) => {{
+                if (!e.ctrlKey && !e.metaKey) return;
+                if (e.key === '=' || e.key === '+' || e.keyCode === 187 || e.keyCode === 107) {{
+                  e.preventDefault();
+                  setReconZoom(reconZoom + 0.05);
+                }} else if (e.key === '-' || e.key === '_' || e.keyCode === 189 || e.keyCode === 109) {{
+                  e.preventDefault();
+                  setReconZoom(reconZoom - 0.05);
+                }} else if (e.key === '0' || e.keyCode === 96 || e.keyCode === 48) {{
+                  e.preventDefault();
+                  setReconZoom(0.85);
+                }}
+              }}, {{ passive: false }});
+
+              window.addEventListener('wheel', (e) => {{
+                if (!e.ctrlKey && !e.metaKey) return;
+                e.preventDefault();
+                if (e.deltaY < 0) {{
+                  setReconZoom(reconZoom + 0.05);
+                }} else if (e.deltaY > 0) {{
+                  setReconZoom(reconZoom - 0.05);
+                }}
+              }}, {{ passive: false }});
+
               // ---------------- Center Web Portal & Content ----------------
               const centerPortal = () => {{
                 try {{
+                  applyReconZoom();
                   let style = document.getElementById('efl-nexus-center-portal');
                   if (!style) {{
                     style = document.createElement('style');
@@ -791,8 +977,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                         float: none !important;
                       }}
                       .table-responsive {{
-                        display: flex !important;
-                        justify-content: center !important;
+                        display: block !important;
                         width: 100% !important;
                         overflow-x: auto !important;
                       }}
@@ -815,8 +1000,8 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                       t.parentElement.style.marginLeft = 'auto';
                       t.parentElement.style.marginRight = 'auto';
                       if (t.parentElement.classList.contains('table-responsive')) {{
-                        t.parentElement.style.display = 'flex';
-                        t.parentElement.style.justifyContent = 'center';
+                        t.parentElement.style.display = 'block';
+                        t.parentElement.style.overflowX = 'auto';
                       }}
                     }}
                   }});
@@ -925,6 +1110,61 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               attachBackButton();
               setInterval(attachBackButton, 1000);
 
+              // Floating Zoom Controls widget next to Go Back button
+              const attachZoomControls = () => {{
+                if (document.getElementById('efl-nexus-zoom-widget')) return;
+                const widget = document.createElement('div');
+                widget.id = 'efl-nexus-zoom-widget';
+                Object.assign(widget.style, {{
+                  position: 'fixed', left: '105px', bottom: '8px', zIndex: 2147483647,
+                  display: isReconciliationPage() ? 'flex' : 'none', alignItems: 'center', gap: '4px',
+                  background: '#0d1b2a', borderRadius: '5px', padding: '4px 8px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)', opacity: '0.88',
+                  fontFamily: 'Segoe UI, sans-serif', fontSize: '11px', fontWeight: '700',
+                  color: '#ffffff', userSelect: 'none', transition: 'opacity 0.2s'
+                }});
+                widget.onmouseenter = () => {{ widget.style.opacity = '1'; }};
+                widget.onmouseleave = () => {{ widget.style.opacity = '0.88'; }};
+
+                const btnMinus = document.createElement('button');
+                btnMinus.type = 'button';
+                btnMinus.textContent = '−';
+                btnMinus.title = 'Zoom Out (Ctrl + -)';
+                Object.assign(btnMinus.style, {{
+                  background: '#1b2a4a', color: '#fff', border: '0', borderRadius: '3px',
+                  width: '18px', height: '18px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px',
+                  lineHeight: '1', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }});
+                btnMinus.onclick = () => setReconZoom(reconZoom - 0.05);
+
+                const label = document.createElement('span');
+                label.id = 'efl-nexus-zoom-level';
+                label.textContent = `${{Math.round(reconZoom * 100)}}%`;
+                label.title = 'Current Zoom (Click to reset to 85% | Ctrl + 0)';
+                Object.assign(label.style, {{
+                  padding: '0 4px', cursor: 'pointer', minWidth: '32px', textAlign: 'center'
+                }});
+                label.onclick = () => setReconZoom(0.85);
+
+                const btnPlus = document.createElement('button');
+                btnPlus.type = 'button';
+                btnPlus.textContent = '+';
+                btnPlus.title = 'Zoom In (Ctrl + +)';
+                Object.assign(btnPlus.style, {{
+                  background: '#1b2a4a', color: '#fff', border: '0', borderRadius: '3px',
+                  width: '18px', height: '18px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px',
+                  lineHeight: '1', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }});
+                btnPlus.onclick = () => setReconZoom(reconZoom + 0.05);
+
+                widget.appendChild(btnMinus);
+                widget.appendChild(label);
+                widget.appendChild(btnPlus);
+                if (document.body) document.body.appendChild(widget);
+              }};
+              attachZoomControls();
+              setInterval(attachZoomControls, 1000);
+
               // ---------------- Download & Attachment Handling ----------------
               const isJobDetailsPage = () => {{
                 try {{
@@ -999,9 +1239,17 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                       }} catch (e) {{}}
                     }}
                   }}
+                  const ths = [...document.querySelectorAll('th, td, label, dt')];
+                  for (let i = 0; i < ths.length; i++) {{
+                    const txt = (ths[i].textContent || '').trim();
+                    if (/^(?:Gate\\s*Pass(?:\\s*No|\\s*ID|\\s*Number)?|Gatepass(?:\\s*No|\\s*ID|\\s*Number)?)$/i.test(txt)) {{
+                      const next = ths[i].nextElementSibling;
+                      if (next && next.textContent.trim()) return next.textContent.trim();
+                    }}
+                  }}
                   const elements = [...document.querySelectorAll('h1, h2, h3, h4, h5, div, span, p, td, tr')];
                   for (const el of elements) {{
-                    const m = (el.textContent || '').match(/Gate\\s*Pass(?:\\s*No|\\s*ID|\\s*Number)?\\s*[-:]\\s*([A-Za-z0-9_-]+)/i);
+                    const m = (el.textContent || '').match(/Gate\\s*Pass(?:\\s*No|\\s*ID|\\s*Number)?\\s*[-:#]?\\s*([A-Za-z0-9_-]+)/i);
                     if (m && m[1]) return m[1].trim();
                   }}
                   const saved = sessionStorage.getItem('nexus_active_gatepass') || localStorage.getItem('nexus_active_gatepass');
@@ -1073,7 +1321,16 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 }} catch (e) {{}}
               }};
 
-              const fetchAndSaveFile = async (url, suggestedName, statusEl = null) => {{
+              let reconciliationReturnTimer = null;
+              const scheduleReturnToReconciliation = () => {{
+                if (reconciliationReturnTimer) clearTimeout(reconciliationReturnTimer);
+                showDownloadToast('Download saved. Returning to Reconciliation in 5 seconds...');
+                reconciliationReturnTimer = setTimeout(() => {{
+                  location.assign(reconUrl);
+                }}, 5000);
+              }};
+
+              const fetchAndSaveFile = async (url, suggestedName, statusEl = null, returnAfterSuccess = false) => {{
                 if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.save_downloaded_file !== 'function') {{
                   showDownloadToast('Connection initializing... please click again in a moment.', true);
                   return false;
@@ -1118,6 +1375,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                           const locName = result.folder ? 'folder ' + result.folder : 'Downloads folder';
                           showDownloadToast('✓ Saved: ' + result.filename + ' in ' + locName + '!');
                           if (statusEl) statusEl.textContent = '✓ Downloaded';
+                          if (returnAfterSuccess) scheduleReturnToReconciliation();
                           resolve(result);
                         }} else {{
                           throw new Error(result && result.error ? result.error : 'Save failed');
@@ -1170,7 +1428,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   e.stopPropagation();
                   const url = link.href || link.getAttribute('href');
                   const filename = link.getAttribute('download') || link.textContent.trim() || url.split('/').pop().split('?')[0];
-                  fetchAndSaveFile(url, filename, link);
+                  fetchAndSaveFile(url, filename, link, true);
                 }}
               }}, true);
 
@@ -1201,7 +1459,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                     ev.stopPropagation();
                     const stack = card.getAttribute('data-stack') || 'evidence';
                     const filename = `Job_${{getCurrentJobId() || 'job'}}_Stack_${{stack}}_${{imgUrl.split('/').pop().split('?')[0]}}`;
-                    fetchAndSaveFile(imgUrl, filename, dlBtn);
+                    fetchAndSaveFile(imgUrl, filename, dlBtn, true);
                   }});
                   card.appendChild(dlBtn);
                 }});
@@ -1220,7 +1478,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                       if (modalImg && modalImg.src) {{
                         const stack = document.getElementById('modalStack')?.textContent || '';
                         const filename = `Job_${{getCurrentJobId() || 'job'}}_${{stack.replace(/[^a-z0-9]/gi, '_')}}_evidence.jpg`;
-                        fetchAndSaveFile(modalImg.src, filename, modalDlBtn);
+                        fetchAndSaveFile(modalImg.src, filename, modalDlBtn, true);
                       }}
                     }});
                     const closeBtn = modalHeader.querySelector('.btn-close');
@@ -1256,7 +1514,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 return items;
               }};
 
-              const downloadAllJobFiles = async () => {{
+              const downloadAllJobFiles = async (returnAfterSuccess = false) => {{
                 const items = getAllJobDownloadItems();
                 if (!items.length) {{
                   showDownloadToast('No downloadable files or evidence images found on this page.', true);
@@ -1287,6 +1545,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 }}
                 const destMsg = lastFolder ? 'folder ' + lastFolder : 'Downloads folder';
                 showDownloadToast('✓ Finished: ' + successCount + ' of ' + items.length + ' file(s) saved to ' + destMsg + '!');
+                if (returnAfterSuccess && successCount > 0) scheduleReturnToReconciliation();
               }};
 
               const attachDownloadAllButton = () => {{
@@ -1320,7 +1579,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   }});
                   btn.onmouseenter = () => {{ btn.style.opacity = '1'; }};
                   btn.onmouseleave = () => {{ btn.style.opacity = '0.9'; }};
-                  btn.addEventListener('click', downloadAllJobFiles);
+                  btn.addEventListener('click', () => downloadAllJobFiles(true));
                   if (document.body) document.body.appendChild(btn);
                 }} else {{
                   btn.style.display = 'block';
@@ -1328,6 +1587,54 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               }};
               attachDownloadAllButton();
               setInterval(attachDownloadAllButton, 1000);
+
+              const attachLoadingHistoryButton = () => {{
+                let btn = document.getElementById('efl-nexus-loading-history');
+                if (!isJobDetailsPage()) {{
+                  if (btn) btn.style.display = 'none';
+                  return;
+                }}
+                if (!btn) {{
+                  btn = document.createElement('button');
+                  btn.id = 'efl-nexus-loading-history';
+                  btn.type = 'button';
+                  btn.textContent = 'Download Loading History';
+                  Object.assign(btn.style, {{
+                    position: 'fixed', left: '260px', bottom: '8px', zIndex: 2147483647,
+                    border: '0', borderRadius: '5px', padding: '6px 12px', cursor: 'pointer',
+                    background: '#2563eb', color: '#ffffff', fontWeight: '700', fontSize: '11px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)', opacity: '0.9',
+                  }});
+                  btn.addEventListener('click', async () => {{
+                    if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.request_loading_history !== 'function') {{
+                      showDownloadToast('Connection initializing... please try again.', true);
+                      return;
+                    }}
+                    btn.disabled = true;
+                    try {{
+                      const activeGp = getCurrentGatepass();
+                      const result = await window.pywebview.api.request_loading_history({{
+                        job_id: getCurrentJobId(), gatepass: activeGp, client: getCurrentClient(),
+                      }});
+                      if (result && result.success) {{
+                        const gpMsg = activeGp ? ' for Gate Pass ' + activeGp : '';
+                        showDownloadToast('Querying and exporting Loading History' + gpMsg + '...');
+                      }} else {{
+                        showDownloadToast('Could not open Loading History.', true);
+                      }}
+                    }} catch (e) {{
+                      showDownloadToast('Could not open Loading History.', true);
+                    }} finally {{
+                      btn.disabled = false;
+                    }}
+                  }});
+                  if (document.body) document.body.appendChild(btn);
+                }} else {{
+                  btn.style.display = 'block';
+                }}
+              }};
+              attachLoadingHistoryButton();
+              setInterval(attachLoadingHistoryButton, 1000);
 
               // Command listener: executes "Start" action for a selected job in the web portal
               const executeStartJob = (jobId) => {{
@@ -1370,7 +1677,22 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 try {{
                   const cmd = await window.pywebview.api.get_pending_command();
                   if (cmd && cmd.action === 'start_job' && cmd.job_id) {{
+                    try {{
+                      sessionStorage.setItem('nexus_active_job_id', cmd.job_id);
+                      localStorage.setItem('nexus_active_job_id', cmd.job_id);
+                      if (cmd.gatepass) {{
+                        sessionStorage.setItem('nexus_active_gatepass', cmd.gatepass);
+                        localStorage.setItem('nexus_active_gatepass', cmd.gatepass);
+                      }}
+                      if (cmd.client) {{
+                        sessionStorage.setItem('nexus_active_client', cmd.client);
+                        localStorage.setItem('nexus_active_client', cmd.client);
+                      }}
+                    }} catch (e) {{}}
                     executeStartJob(cmd.job_id);
+                  }} else if (cmd && (cmd.action === 'grab_data_now' || cmd.action === 'force_export')) {{
+                    lastExportSignature = '';
+                    autoExportJobIds(true);
                   }} else if (cmd && cmd.action === 'download_job_files') {{
                     if (cmd.job_id) {{
                       window.__nexusJobContext = {{
@@ -1468,6 +1790,1245 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
     window.events.loaded += add_extract_button
     window.events.loaded += automate_portal_flow
     webview.start(gui="edgechromium", private_mode=True)
+
+
+def run_loading_history_browser(
+    start_url: str,
+    gatepass: str = "",
+    job_id: str = "",
+    client: str = "",
+) -> None:
+    """Run a minimal Körber WebView2 window for Loading History downloads."""
+    try:
+        import webview
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        # The report export uses target=_blank. Keep it in this authenticated
+        # WebView; the user's regular browser does not have its auth ticket.
+        webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
+    except Exception as err:
+        sys.stderr.write(f"Failed to import 'webview' for Loading History: {err}\n")
+        sys.stderr.flush()
+        raise
+
+    username = os.environ.pop("EFL_NEXUS_KORBER_USER", "")
+    password = os.environ.pop("EFL_NEXUS_KORBER_PASS", "")
+    stop_at_gatepass = os.environ.pop("EFL_NEXUS_LOADING_HISTORY_STOP_AT_GATEPASS", "") == "1"
+    gatepass = _clean(str(gatepass or os.environ.pop("EFL_NEXUS_KORBER_GATEPASS", "") or ""))
+    job_id = _clean(str(job_id or os.environ.pop("EFL_NEXUS_KORBER_JOB_ID", "") or ""))
+    client = _clean(str(client or os.environ.pop("EFL_NEXUS_KORBER_CLIENT", "") or ""))
+
+    # Resolve persisted values only when NOT in manual stop-at-gatepass mode
+    if not stop_at_gatepass:
+        # 1. Resolve from loading history event file
+        event_file = _loading_history_event_file()
+        if event_file.exists():
+            try:
+                ev_data = json.loads(event_file.read_text(encoding="utf-8"))
+                if not gatepass:
+                    gatepass = _clean(str(ev_data.get("gatepass") or ev_data.get("active_gatepass") or ""))
+                if not job_id:
+                    job_id = _clean(str(ev_data.get("job_id") or ""))
+                if not client:
+                    client = _clean(str(ev_data.get("client") or ""))
+            except Exception:
+                pass
+
+        # 2. Resolve from persisted job map
+        persisted = load_persisted_job_map()
+        if job_id and job_id.casefold() in persisted:
+            mapped = persisted[job_id.casefold()]
+            if not gatepass:
+                gatepass = _clean(str(mapped.get("gatepass") or ""))
+            if not client:
+                client = _clean(str(mapped.get("client") or ""))
+        elif gatepass:
+            for mapped in persisted.values():
+                if _clean(str(mapped.get("gatepass", ""))) == gatepass:
+                    if not job_id:
+                        job_id = _clean(str(mapped.get("job_id") or ""))
+                    if not client:
+                        client = _clean(str(mapped.get("client") or ""))
+                    break
+
+        # 3. Resolve from website_grabber_results.json
+        if not job_id or not client or not gatepass:
+            try:
+                base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+                res_file = base / "EFL_NEXUS" / "website_grabber_results.json"
+                if res_file.exists():
+                    res_data = json.loads(res_file.read_text(encoding="utf-8"))
+                    records = res_data.get("records") if isinstance(res_data, dict) else res_data
+                    if isinstance(records, list):
+                        for item in reversed(records):
+                            item_gp = _clean(str(item.get("gatepass") or ""))
+                            item_jid = _clean(str(item.get("job_id") or ""))
+                            item_cli = _clean(str(item.get("client") or ""))
+                            if gatepass and item_gp == gatepass:
+                                if not job_id:
+                                    job_id = item_jid
+                                if not client:
+                                    client = item_cli
+                                break
+                            elif job_id and item_jid == job_id:
+                                if not gatepass:
+                                    gatepass = item_gp
+                                if not client:
+                                    client = item_cli
+                                break
+            except Exception:
+                pass
+    else:
+        gatepass = ""
+        job_id = ""
+        client = ""
+
+    if not start_url or not username or not password:
+        raise ValueError("Körber URL, username, and password are required for Loading History.")
+
+    class LoadingHistoryBridge:
+        def __init__(self, gp: str, jid: str = "", cli: str = ""):
+            self._gatepass = gp
+            self._job_id = jid
+            self._client = cli
+
+        def get_pending_command(self) -> dict[str, Any] | None:
+            cmd_file = _loading_history_command_file()
+            try:
+                if cmd_file.exists():
+                    text = cmd_file.read_text(encoding="utf-8")
+                    cmd_file.unlink(missing_ok=True)
+                    data = json.loads(text)
+                    if isinstance(data, dict):
+                        gp = _clean(str(data.get("gatepass") or ""))
+                        jid = _clean(str(data.get("job_id") or ""))
+                        cli = _clean(str(data.get("client") or ""))
+                        if gp:
+                            self._gatepass = gp
+                        if jid:
+                            self._job_id = jid
+                        if cli:
+                            self._client = cli
+                    return data
+            except Exception:
+                pass
+            return None
+
+        def report_gatepass(self, val: str) -> None:
+            c = _clean(str(val or ""))
+            if c:
+                self._gatepass = c
+
+        def get_gatepass(self) -> str:
+            if self._gatepass:
+                return self._gatepass
+            if stop_at_gatepass:
+                return ""
+            ev = _loading_history_event_file()
+            if ev.exists():
+                try:
+                    d = json.loads(ev.read_text(encoding="utf-8"))
+                    self._gatepass = _clean(str(d.get("gatepass") or d.get("active_gatepass") or ""))
+                except Exception:
+                    pass
+            if not self._gatepass:
+                try:
+                    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+                    res_file = base / "EFL_NEXUS" / "website_grabber_results.json"
+                    if res_file.exists():
+                        res_data = json.loads(res_file.read_text(encoding="utf-8"))
+                        records = res_data.get("records") if isinstance(res_data, dict) else res_data
+                        if isinstance(records, list):
+                            for item in reversed(records):
+                                gp = _clean(str(item.get("gatepass") or ""))
+                                if gp:
+                                    self._gatepass = gp
+                                    break
+                except Exception:
+                    pass
+            return self._gatepass
+
+        def get_job_id(self) -> str:
+            return self._job_id
+
+        def get_client(self) -> str:
+            return self._client
+
+        def save_downloaded_file(self, payload: dict[str, Any]) -> dict[str, Any]:
+            import base64
+            from urllib.parse import unquote, urlparse
+            try:
+                raw_filename = str(payload.get("filename") or "").strip()
+                b64_data = payload.get("data") or ""
+                url = str(payload.get("url") or "")
+                gp = _clean(str(payload.get("gatepass") or self.get_gatepass() or ""))
+                jid = _clean(str(payload.get("job_id") or self.get_job_id() or ""))
+                cli = _clean(str(payload.get("client") or self.get_client() or ""))
+
+                if isinstance(b64_data, str):
+                    if "," in b64_data:
+                        b64_data = b64_data.split(",", 1)[1]
+                    file_bytes = base64.b64decode(b64_data)
+                elif isinstance(b64_data, bytes):
+                    file_bytes = b64_data
+                else:
+                    return {"success": False, "error": "Invalid data format"}
+
+                dest_folder = get_job_download_folder(job_id=jid, gatepass=gp, client=cli)
+                if not raw_filename or raw_filename.lower() in ("download", "file", ""):
+                    if url:
+                        parsed = unquote(urlparse(url).path.split("/")[-1])
+                        if parsed:
+                            raw_filename = parsed
+                if not raw_filename:
+                    raw_filename = "Loading_History_Report.xlsx"
+
+                raw_filename = raw_filename.split("?")[0].split("#")[0].strip()
+                target_path = get_unique_download_path(raw_filename, folder=dest_folder)
+                target_path.write_bytes(file_bytes)
+
+                try:
+                    dl_event_file = _download_event_file()
+                    dl_event_file.parent.mkdir(parents=True, exist_ok=True)
+                    dl_event_file.write_text(json.dumps({
+                        "action": "file_downloaded",
+                        "filename": target_path.name,
+                        "path": str(target_path.resolve()),
+                        "folder": target_path.parent.name,
+                        "folder_path": str(target_path.parent.resolve()),
+                        "size": len(file_bytes),
+                        "time": time.time(),
+                        "job_id": jid,
+                        "gatepass": gp,
+                        "client": cli,
+                    }), encoding="utf-8")
+                except Exception:
+                    pass
+
+                return {
+                    "success": True,
+                    "filename": target_path.name,
+                    "path": str(target_path.resolve()),
+                    "folder": target_path.parent.name,
+                    "folder_path": str(target_path.parent.resolve()),
+                    "size": len(file_bytes),
+                }
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+
+    bridge = LoadingHistoryBridge(gatepass, job_id, client)
+    window = webview.create_window(
+        "EFL NEXUS — Loading History",
+        start_url,
+        js_api=bridge,
+        width=1100,
+        height=760,
+        min_size=(800, 600),
+    )
+    user_value = json.dumps(username)
+    password_value = json.dumps(password)
+    gatepass_value = json.dumps(gatepass)
+    stop_at_gatepass_value = "true" if stop_at_gatepass else "false"
+
+    def automate_loading_history() -> None:
+        window.run_js(f"""
+            (() => {{
+              if (window.__eflNexusLoadingHistoryAutomation) return;
+              window.__eflNexusLoadingHistoryAutomation = true;
+              const log = (message) => console.info('[Loading History] ' + message);
+              const setValue = (input, value) => {{
+                const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                setter.call(input, value);
+                input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+              }};
+
+              let activeGatepass = {gatepass_value};
+              const stopAtGatepass = {stop_at_gatepass_value};
+              let manualStopBypassed = false;
+
+              const resolveGatepass = async () => {{
+                if (activeGatepass) return activeGatepass;
+                if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.get_gatepass === 'function') {{
+                  try {{
+                    const res = await window.pywebview.api.get_gatepass();
+                    if (res) activeGatepass = String(res).trim();
+                  }} catch (e) {{}}
+                }}
+                return activeGatepass;
+              }};
+
+              const findGatepassInput = () => {{
+                const searchInDoc = (doc) => {{
+                  if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+                  try {{
+                    const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+                    const allInputs = [...doc.querySelectorAll('hj-textbox input, input.k-textbox, input[type="text"], input:not([type])')];
+                    const visible = allInputs.filter(input => {{
+                      if (!input || input.type === 'hidden' || input.disabled || input.readOnly) return false;
+                      const tid = input.getAttribute('data-hj-test-id') || (input.parentElement ? input.parentElement.getAttribute('data-hj-test-id') : '') || '';
+                      if (tid === 'username' || tid === 'password' || tid === 'menuSearchTextBox') return false;
+                      const ph = (input.placeholder || '').toLowerCase();
+                      if (ph.includes('user name') || ph.includes('password') || ph.includes('search')) return false;
+                      return input.getClientRects ? (input.getClientRects().length > 0) : true;
+                    }});
+                    if (!visible.length) return null;
+
+                    // 1. Direct label-to-row matching: find label/heading matching "Gate Pass" (not Order/Load)
+                    const candidateLabels = [...doc.querySelectorAll('label, span, div, td, th, p, strong, b, hj-field')].filter(el => {{
+                      if (!el || (el.children && el.children.length > 2)) return false;
+                      const txt = (el.textContent || '').trim();
+                      return /^(?:Gate\\s*Pass(?:\\s*ID)?|Gatepass(?:\\s*ID)?)$/i.test(txt) ||
+                             (/\\bgate\\s*pass\\b/i.test(txt) && !/order\\s*number|load\\s*id/i.test(txt));
+                    }});
+
+                    for (const lbl of candidateLabels) {{
+                      const forAttr = lbl.getAttribute && lbl.getAttribute('for');
+                      if (forAttr) {{
+                        const direct = doc.getElementById(forAttr);
+                        if (direct && visible.includes(direct)) return direct;
+                        if (direct) {{
+                          const childInp = direct.querySelector && direct.querySelector('input');
+                          if (childInp && visible.includes(childInp)) return childInp;
+                        }}
+                      }}
+                      let curr = lbl.parentElement;
+                      while (curr && curr !== doc.body && curr.tagName !== 'FORM') {{
+                        const inps = visible.filter(inp => {{
+                          let p = inp;
+                          while (p) {{
+                            if (p === curr) return true;
+                            p = p.parentElement;
+                          }}
+                          return false;
+                        }});
+                        const cText = curr.textContent || '';
+                        const hasOthers = /order\\s*number|load\\s*id/i.test(cText);
+                        if (inps.length > 0 && !hasOthers) {{
+                          return inps[0];
+                        }}
+                        curr = curr.parentElement;
+                      }}
+                    }}
+
+                    // 2. Reverse ancestor check from visible inputs:
+                    // Ancestor must contain "Gate Pass" and must NOT contain "Order Number" or "Load ID"
+                    for (const inp of visible) {{
+                      let curr = inp.parentElement;
+                      while (curr && curr !== doc.body && curr.tagName !== 'FORM') {{
+                        const txt = curr.textContent || '';
+                        if (/\\bgate\\s*pass\\b/i.test(txt) && !/order\\s*number|load\\s*id/i.test(txt)) {{
+                          return inp;
+                        }}
+                        curr = curr.parentElement;
+                      }}
+                    }}
+
+                    // 3. Knockout field metadata inspection on parent <hj-textbox>
+                    if (win && win.ko) {{
+                      for (const inp of visible) {{
+                        const parentHj = inp.closest ? inp.closest('hj-textbox') : (inp.parentElement && inp.parentElement.tagName === 'HJ-TEXTBOX' ? inp.parentElement : null);
+                        if (parentHj) {{
+                          try {{
+                            const ctx = (win.ko.contextFor && win.ko.contextFor(parentHj)) || (win.ko.dataFor && win.ko.dataFor(parentHj));
+                            const f = ctx ? (ctx.field || (ctx.$data && ctx.$data.field) || ctx.$data) : null;
+                            if (f) {{
+                              const meta = JSON.stringify({{
+                                name: typeof f.name === 'function' ? f.name() : f.name,
+                                label: typeof f.label === 'function' ? f.label() : f.label,
+                                caption: typeof f.caption === 'function' ? f.caption() : f.caption,
+                                id: typeof f.id === 'function' ? f.id() : f.id,
+                              }}).toLowerCase();
+                              if (meta.includes('gate') && meta.includes('pass')) return inp;
+                            }}
+                          }} catch (e) {{}}
+                        }}
+                      }}
+                    }}
+
+                    // 4. Input / Component attributes matching gate pass
+                    for (const inp of visible) {{
+                      const parentHj = inp.closest ? inp.closest('hj-textbox') : (inp.parentElement && inp.parentElement.tagName === 'HJ-TEXTBOX' ? inp.parentElement : null);
+                      const idStr = ((inp.id || '') + ' ' + (inp.name || '') + ' ' + (inp.getAttribute('data-bind') || '')).toLowerCase();
+                      const hjStr = parentHj ? ((parentHj.id || '') + ' ' + (parentHj.getAttribute('params') || '') + ' ' + (parentHj.getAttribute('data-hj-test-id') || '')).toLowerCase() : '';
+                      if ((idStr.includes('gate') && idStr.includes('pass')) || (hjStr.includes('gate') && hjStr.includes('pass'))) {{
+                        return inp;
+                      }}
+                    }}
+
+                    // 5. In Loading History Report (menu 1992), exactly 3 textbox inputs exist:
+                    // Index 0 = Order Number, Index 1 = Load ID, Index 2 = Gate Pass ID
+                    if (visible.length === 3) {{
+                      return visible[2];
+                    }}
+
+                    // 6. If an input is currently active/focused, use it
+                    if (doc.activeElement && visible.includes(doc.activeElement)) {{
+                      return doc.activeElement;
+                    }}
+
+                    // 7. Last visible input among multiple inputs (Gate Pass ID is at the bottom of the parameter list)
+                    if (visible.length >= 2) {{
+                      return visible[visible.length - 1];
+                    }}
+
+                    return visible[0] || null;
+                  }} catch (e) {{
+                    return null;
+                  }}
+                }};
+
+                let target = searchInDoc(document);
+                if (target) return target;
+                try {{
+                  const iframes = [...document.querySelectorAll('iframe')];
+                  for (const iframe of iframes) {{
+                    try {{
+                      const idoc = iframe.contentDocument || (iframe.contentWindow && iframe.contentWindow.document);
+                      if (idoc) {{
+                        target = searchInDoc(idoc);
+                        if (target) return target;
+                      }}
+                    }} catch (e) {{}}
+                  }}
+                }} catch (e) {{}}
+                return null;
+              }};
+
+              const typeGatepassIntoInput = async (input, val) => {{
+                if (!input || !val) return false;
+                try {{
+                  const win = input.ownerDocument && input.ownerDocument.defaultView ? input.ownerDocument.defaultView : window;
+                  if (typeof input.focus === 'function') input.focus();
+                  if (typeof input.click === 'function') input.click();
+                  if (typeof input.select === 'function') input.select();
+
+                  const proto = win.HTMLInputElement ? win.HTMLInputElement.prototype : HTMLInputElement.prototype;
+                  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+
+                  // Clear current value
+                  if (desc && desc.set) {{
+                    desc.set.call(input, '');
+                  }} else {{
+                    input.value = '';
+                  }}
+
+                  const Ev = win.Event || Event;
+                  const KbEv = win.KeyboardEvent || KeyboardEvent || Ev;
+
+                  // Character-by-character typing simulation
+                  let current = '';
+                  for (let i = 0; i < val.length; i++) {{
+                    const ch = val[i];
+                    current += ch;
+
+                    try {{
+                      input.dispatchEvent(new KbEv('keydown', {{ key: ch, bubbles: true, cancelable: true }}));
+                    }} catch (e) {{}}
+                    try {{
+                      input.dispatchEvent(new KbEv('keypress', {{ key: ch, bubbles: true, cancelable: true }}));
+                    }} catch (e) {{}}
+
+                    if (desc && desc.set) {{
+                      desc.set.call(input, current);
+                    }} else {{
+                      input.value = current;
+                    }}
+
+                    try {{
+                      input.dispatchEvent(new (win.InputEvent || Ev)('input', {{ bubbles: true, data: ch, inputType: 'insertText' }}));
+                    }} catch (e) {{
+                      input.dispatchEvent(new Ev('input', {{ bubbles: true }}));
+                    }}
+
+                    try {{
+                      input.dispatchEvent(new KbEv('keyup', {{ key: ch, bubbles: true, cancelable: true }}));
+                    }} catch (e) {{}}
+
+                    if (win.ko && typeof win.ko.dataFor === 'function') {{
+                      try {{
+                        const inner = win.ko.dataFor(input);
+                        if (inner && typeof inner._value === 'function') {{
+                          inner._value(current);
+                          if (typeof inner._value.valueHasMutated === 'function') inner._value.valueHasMutated();
+                        }}
+                      }} catch (e) {{}}
+                    }}
+
+                    await new Promise(r => setTimeout(r, 20));
+                  }}
+
+                  // Final property assignment to guarantee correctness
+                  if (desc && desc.set) {{
+                    desc.set.call(input, val);
+                  }} else {{
+                    input.value = val;
+                  }}
+
+                  // Sync Knockout observables
+                  if (win.ko) {{
+                    try {{
+                      if (typeof win.ko.dataFor === 'function') {{
+                        const inner = win.ko.dataFor(input);
+                        if (inner && typeof inner._value === 'function') {{
+                          inner._value(val);
+                          if (typeof inner._value.valueHasMutated === 'function') inner._value.valueHasMutated();
+                          log('Set inner Knockout observable _value: ' + val);
+                        }}
+                      }}
+                      const hjParent = input.closest ? input.closest('hj-textbox') : (input.parentElement && input.parentElement.tagName === 'HJ-TEXTBOX' ? input.parentElement : null);
+                      if (hjParent) {{
+                        const parentCtx = (win.ko.contextFor && win.ko.contextFor(hjParent)) || (win.ko.dataFor && win.ko.dataFor(hjParent));
+                        if (parentCtx) {{
+                          const f = parentCtx.field || (parentCtx.$data && parentCtx.$data.field);
+                          if (f && typeof f.value === 'function') {{
+                            f.value(val);
+                            if (typeof f.value.valueHasMutated === 'function') f.value.valueHasMutated();
+                            log('Set outer Knockout observable field.value: ' + val);
+                          }} else if (parentCtx.value && typeof parentCtx.value === 'function') {{
+                            parentCtx.value(val);
+                            if (typeof parentCtx.value.valueHasMutated === 'function') parentCtx.value.valueHasMutated();
+                            log('Set outer Knockout observable value: ' + val);
+                          }}
+                        }}
+                      }}
+                    }} catch (e) {{}}
+                  }}
+
+                  input.dispatchEvent(new Ev('input', {{ bubbles: true }}));
+                  input.dispatchEvent(new Ev('change', {{ bubbles: true }}));
+                  try {{
+                    input.dispatchEvent(new FocusEvent('blur', {{ bubbles: true }}));
+                  }} catch (e) {{
+                    input.dispatchEvent(new Ev('blur', {{ bubbles: true }}));
+                  }}
+                  if (typeof input.blur === 'function') input.blur();
+
+                  input.setAttribute('data-efl-nexus-gatepass-typed', val);
+                  log('Successfully typed gatepass into field: ' + val);
+                  return true;
+                }} catch (e) {{
+                  log('Error typing gatepass: ' + e);
+                  return false;
+                }}
+              }};
+
+              const fillGatepassIntoInput = typeGatepassIntoInput;
+
+              const findQueryButton = () => {{
+                const searchInDoc = (doc) => {{
+                  if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+                  try {{
+                    // 1. Exact match by query.svg icon background in style attribute or background style
+                    // User inspection: <div data-bind="style: sourceStyle" style="background: url(&quot;/resources/HighJump%20One%20Platform/query.svg&quot;);"></div>
+                    const svgIcon = doc.querySelector("*[style*='query.svg' i], div[style*='query.svg' i], img[src*='query.svg' i], [data-bind*='sourceStyle'][style*='query' i]");
+                    const svgSource = svgIcon
+                      ? ((svgIcon.getAttribute('style') || '') + ' ' + (svgIcon.getAttribute('src') || '')).toLowerCase()
+                      : '';
+                    if (svgIcon && svgSource.includes('query')) {{
+                      const btn = svgIcon.closest ? svgIcon.closest('a, button, [role="button"], hj-button') : (svgIcon.parentElement && (svgIcon.parentElement.tagName === 'A' || svgIcon.parentElement.tagName === 'BUTTON') ? svgIcon.parentElement : null);
+                      if (btn) return btn;
+                      return svgIcon;
+                    }}
+
+                    // 2. Exact match by span with observableText containing "Query"
+                    // User inspection: <span data-bind="text: observableText">Query</span>
+                    const observableSpans = [...doc.querySelectorAll("span[data-bind*='observableText'], *[data-bind*='observableText']")];
+                    for (const sp of observableSpans) {{
+                      if (/^Query$/i.test((sp.textContent || '').trim())) {{
+                        const btn = sp.closest ? sp.closest('a, button, [role="button"], hj-button') : (sp.parentElement && (sp.parentElement.tagName === 'A' || sp.parentElement.tagName === 'BUTTON') ? sp.parentElement : null);
+                        if (btn) return btn;
+                        return sp;
+                      }}
+                    }}
+
+                    // 3. Exact match by anchor/button with data-bind*='click: click' containing "Query"
+                    // User inspection: <a href="#" data-bind="click: click, css: $data.cssClasses">
+                    const clickAnchors = [...doc.querySelectorAll("a[data-bind*='click: click'], button[data-bind*='click: click'], a[data-bind*='click'], [data-bind*='click: click']")];
+                    for (const a of clickAnchors) {{
+                      const txt = (a.textContent || '').trim();
+                      if (/^Query$/i.test(txt) || (a.innerHTML && /query\\.svg/i.test(a.innerHTML))) return a;
+                    }}
+
+                    // 4. Knockout inspection on links/buttons
+                    const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+                    if (win && win.ko && typeof win.ko.dataFor === 'function') {{
+                      const allLinks = [...doc.querySelectorAll('a, button, [role="button"], hj-button')];
+                      for (const el of allLinks) {{
+                        try {{
+                          const data = win.ko.dataFor(el);
+                          if (data) {{
+                            const text = typeof data.observableText === 'function' ? data.observableText() : data.observableText;
+                            const src = typeof data.sourceStyle === 'function' ? JSON.stringify(data.sourceStyle()) : JSON.stringify(data.sourceStyle || '');
+                            if (String(text).trim().toLowerCase() === 'query' || (src && src.toLowerCase().includes('query.svg'))) return el;
+                          }}
+                        }} catch (e) {{}}
+                      }}
+                    }}
+
+                    // 5. Explicit data-hj-test-id
+                    const byTestId = doc.querySelector("[data-hj-test-id*='query' i], [data-hj-test-id*='Query']");
+                    if (byTestId) return byTestId;
+
+                    // 6. Clickable elements matching Query text or title/aria-label (excluding Reset)
+                    const clickable = [...doc.querySelectorAll('button, a, hj-button, [role="button"], span, div')];
+                    const match = clickable.find(el => {{
+                      const txt = (el.textContent || '').trim();
+                      if (/^(?:Query|Run Query)$/i.test(txt)) return true;
+                      const title = (el.getAttribute('title') || '').trim();
+                      const aria = (el.getAttribute('aria-label') || '').trim();
+                      return /^Query$/i.test(title) || /^Query$/i.test(aria);
+                    }});
+                    if (match) {{
+                      const btn = match.closest ? match.closest('button, a, [role="button"], hj-button') : null;
+                      return btn || match;
+                    }}
+
+                    // 7. Toolbar items containing word "Query" without "Reset"
+                    const toolbarItem = clickable.find(el => {{
+                      const txt = (el.textContent || '').trim();
+                      const words = txt.split(/\\s+/);
+                      return words.some(w => /^query$/i.test(w)) && !words.some(w => /^reset$/i.test(w)) && txt.length <= 25;
+                    }});
+                    if (toolbarItem) {{
+                      const btn = toolbarItem.closest ? toolbarItem.closest('button, a, [role="button"], hj-button') : null;
+                      return btn || toolbarItem;
+                    }}
+
+                    return null;
+                  }} catch (e) {{
+                    return null;
+                  }}
+                }};
+
+                const searchAllDocs = (rootDoc) => {{
+                  if (!rootDoc) return null;
+                  const res = searchInDoc(rootDoc);
+                  if (res) return res;
+                  try {{
+                    const frames = [...rootDoc.querySelectorAll('iframe, frame')];
+                    for (const frame of frames) {{
+                      try {{
+                        const cdoc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+                        if (cdoc) {{
+                          const nested = searchAllDocs(cdoc);
+                          if (nested) return nested;
+                        }}
+                      }} catch (e) {{}}
+                    }}
+                  }} catch (e) {{}}
+                  return null;
+                }};
+
+                let target = searchAllDocs(document);
+                if (target) return target;
+
+                try {{
+                  if (window.frames && window.frames.length > 0) {{
+                    for (let i = 0; i < window.frames.length; i++) {{
+                      try {{
+                        const fdoc = window.frames[i].document;
+                        if (fdoc) {{
+                          target = searchAllDocs(fdoc);
+                          if (target) return target;
+                        }}
+                      }} catch (e) {{}}
+                    }}
+                  }}
+                }} catch (e) {{}}
+
+                return null;
+              }};
+
+              const clickQueryButton = (btn) => {{
+                if (!btn) return false;
+                try {{
+                  const doc = btn.ownerDocument || document;
+                  const win = (doc && doc.defaultView) || (btn.ownerDocument && btn.ownerDocument.defaultView) || (typeof window !== 'undefined' ? window : null);
+                  log('Clicking Query button to execute loading history report');
+
+                  if (typeof btn.focus === 'function') {{
+                    try {{ btn.focus(); }} catch (e) {{}}
+                  }}
+
+                  const span = btn.querySelector ? btn.querySelector("span[data-bind*='observableText'], span") : null;
+                  const icon = btn.querySelector ? btn.querySelector("*[style*='query.svg' i], [data-bind*='sourceStyle']") : null;
+                  const ko = (win && win.ko) || (typeof window !== 'undefined' && window.ko);
+                  const vm = (ko && typeof ko.dataFor === 'function')
+                    ? (ko.dataFor(btn) || (span ? ko.dataFor(span) : null) || (icon ? ko.dataFor(icon) : null))
+                    : null;
+
+                  // A single native click is important here. Combining native,
+                  // synthetic, jQuery, and direct Knockout clicks submits the
+                  // report several times and invalidates HighJump's export token.
+                  let vmRan = false;
+                  if (vm && typeof vm.click === 'function') {{
+                    const origClick = vm.click;
+                    vm.click = function(...args) {{
+                      vmRan = true;
+                      return origClick.apply(this, args);
+                    }};
+                  }}
+
+                  if (typeof btn.click === 'function') {{
+                    btn.click();
+                  }} else {{
+                    return false;
+                  }}
+
+                  // Minimal fallback for non-browser/synthetic environments in
+                  // which Element.click() does not run the Knockout binding.
+                  if (vm && typeof vm.click === 'function' && !vmRan) {{
+                    const fakeEvt = (win && win.MouseEvent)
+                      ? new win.MouseEvent('click', {{ bubbles: true, cancelable: true, view: win }})
+                      : {{ type: 'click' }};
+                    vm.click.call(vm, vm, fakeEvt);
+                  }}
+
+                  return true;
+                }} catch (e) {{
+                  log('Error clicking Query button: ' + e);
+                  return false;
+                }}
+              }};
+
+              const findExportButton = () => {{
+                const searchInDoc = (doc) => {{
+                  if (!doc || typeof doc.querySelectorAll !== 'function') return null;
+                  try {{
+                    // 1. Exact match by FontAwesome icon: fa-share-square-o or fa-share-square
+                    // User inspection: <i data-bind="css: css" class="fa fa-fw fa-share-square-o"></i>
+                    const icon = doc.querySelector("i.fa-share-square-o, i[class*='fa-share-square'], i[class*='share-square']");
+                    if (icon) {{
+                      const btn = icon.closest ? icon.closest('a, button, [role="button"], hj-button') : (icon.parentElement && (icon.parentElement.tagName === 'A' || icon.parentElement.tagName === 'BUTTON') ? icon.parentElement : null);
+                      if (btn) return btn;
+                      return icon;
+                    }}
+
+                    // 2. Exact match by span with observableText containing "Export"
+                    // User inspection: <span data-bind="text: observableText">Export</span>
+                    const observableSpans = [...doc.querySelectorAll("span[data-bind*='observableText'], *[data-bind*='observableText']")];
+                    for (const sp of observableSpans) {{
+                      if (/^Export$/i.test((sp.textContent || '').trim())) {{
+                        const btn = sp.closest ? sp.closest('a, button, [role="button"], hj-button') : (sp.parentElement && (sp.parentElement.tagName === 'A' || sp.parentElement.tagName === 'BUTTON') ? sp.parentElement : null);
+                        if (btn) return btn;
+                        return sp;
+                      }}
+                    }}
+
+                    // 3. Exact match by anchor/button with data-bind*='click: click' containing "Export"
+                    // User inspection: <a href="#" data-bind="click: click, css: $data.cssClasses"> ... <span>Export</span></a>
+                    const clickAnchors = [...doc.querySelectorAll("a[data-bind*='click: click'], button[data-bind*='click: click'], a[data-bind*='click'], [data-bind*='click: click']")];
+                    for (const a of clickAnchors) {{
+                      const txt = (a.textContent || '').trim();
+                      if (/^Export$/i.test(txt) || (a.innerHTML && /fa-share-square/i.test(a.innerHTML))) return a;
+                    }}
+
+                    // 4. Knockout inspection on links/buttons
+                    const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+                    if (win && win.ko && typeof win.ko.dataFor === 'function') {{
+                      const allLinks = [...doc.querySelectorAll('a, button, [role="button"], hj-button')];
+                      for (const el of allLinks) {{
+                        try {{
+                          const data = win.ko.dataFor(el);
+                          if (data) {{
+                            const text = typeof data.observableText === 'function' ? data.observableText() : data.observableText;
+                            if (String(text).trim().toLowerCase() === 'export') return el;
+                          }}
+                        }} catch (e) {{}}
+                      }}
+                    }}
+
+                    // 5. Explicit data-hj-test-id
+                    const byTestId = doc.querySelector("[data-hj-test-id*='export' i], [data-hj-test-id*='Export']");
+                    if (byTestId) return byTestId;
+
+                    // 6. Clickable elements matching Export text or title/aria-label
+                    const clickable = [...doc.querySelectorAll('button, a, hj-button, [role="button"], span, div')];
+                    const match = clickable.find(el => {{
+                      const txt = (el.textContent || '').trim();
+                      if (/^(?:Export|Export Report)$/i.test(txt)) return true;
+                      const title = (el.getAttribute('title') || '').trim();
+                      const aria = (el.getAttribute('aria-label') || '').trim();
+                      return /^Export$/i.test(title) || /^Export$/i.test(aria);
+                    }});
+                    if (match) {{
+                      const btn = match.closest ? match.closest('button, a, [role="button"], hj-button') : null;
+                      return btn || match;
+                    }}
+
+                    return null;
+                  }} catch (e) {{
+                    return null;
+                  }}
+                }};
+
+                const searchAllDocs = (rootDoc) => {{
+                  if (!rootDoc) return null;
+                  const res = searchInDoc(rootDoc);
+                  if (res) return res;
+                  try {{
+                    const frames = [...rootDoc.querySelectorAll('iframe, frame')];
+                    for (const frame of frames) {{
+                      try {{
+                        const cdoc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+                        if (cdoc) {{
+                          const nested = searchAllDocs(cdoc);
+                          if (nested) return nested;
+                        }}
+                      }} catch (e) {{}}
+                    }}
+                  }} catch (e) {{}}
+                  return null;
+                }};
+
+                let target = searchAllDocs(document);
+                if (target) return target;
+
+                try {{
+                  if (window.frames && window.frames.length > 0) {{
+                    for (let i = 0; i < window.frames.length; i++) {{
+                      try {{
+                        const fdoc = window.frames[i].document;
+                        if (fdoc) {{
+                          target = searchAllDocs(fdoc);
+                          if (target) return target;
+                        }}
+                      }} catch (e) {{}}
+                    }}
+                  }}
+                }} catch (e) {{}}
+
+                return null;
+              }};
+
+              let exportSubmitted = false;
+              const clickExportButton = (btn) => {{
+                if (!btn || exportSubmitted) return false;
+                try {{
+                  exportSubmitted = true;
+                  if (typeof sessionStorage !== 'undefined' && sessionStorage.setItem) {{
+                    sessionStorage.setItem('eflNexusLoadingHistoryExportSubmitted', '1');
+                  }}
+                  log('Executing single clean click on Export button');
+
+                  const doc = btn.ownerDocument || document;
+                  const win = (doc && doc.defaultView) || (btn.ownerDocument && btn.ownerDocument.defaultView) || (typeof window !== 'undefined' ? window : null);
+
+                  if (typeof btn.focus === 'function') {{
+                    try {{ btn.focus(); }} catch (e) {{}}
+                  }}
+
+                  const ko = (win && win.ko) || (typeof window !== 'undefined' && window.ko);
+                  const vm = (ko && typeof ko.dataFor === 'function')
+                    ? (ko.dataFor(btn) || (btn.querySelector ? ko.dataFor(btn.querySelector('span')) : null) || (btn.querySelector ? ko.dataFor(btn.querySelector('i')) : null))
+                    : null;
+
+                  let vmRan = false;
+                  if (vm && typeof vm.click === 'function') {{
+                    const origClick = vm.click;
+                    vm.click = function(...args) {{
+                      vmRan = true;
+                      return origClick.apply(this, args);
+                    }};
+                  }}
+
+                  // 1. Native click on the button element (triggers Knockout data-bind="click: click" naturally)
+                  if (typeof btn.click === 'function') {{
+                    btn.click();
+                  }}
+
+                  // 2. If in a synthetic test/mock environment where addEventListener wasn't bound, invoke vm.click directly
+                  if (vm && typeof vm.click === 'function' && !vmRan) {{
+                    const fakeEvt = (win && win.MouseEvent)
+                      ? new win.MouseEvent('click', {{ bubbles: true, cancelable: true, view: win }})
+                      : {{ type: 'click' }};
+                    vm.click.call(vm, vm, fakeEvt);
+                  }}
+
+                  return true;
+                }} catch (e) {{
+                  log('Error clicking Export button: ' + e);
+                  return false;
+                }}
+              }};
+
+              let attempts = 0;
+              let lastMenuClick = 0;
+              let searchEntered = false;
+              let isTyping = false;
+              let queryClickCount = 0;
+              let lastQueryClickTime = 0;
+              let lastQueriedGatepass = '';
+              let exportClickCount = 0;
+              let lastExportClickTime = 0;
+
+              const automate = async () => {{
+                attempts++;
+
+                // Auto-Recovery: Check if the page is displaying HighJump ASP.NET Yellow Screen of Death error
+                try {{
+                  const checkTexts = [(document.body && document.body.textContent) || ''];
+                  const iframes = [...document.querySelectorAll('iframe')];
+                  for (const f of iframes) {{
+                    try {{
+                      const fdoc = f.contentDocument || (f.contentWindow && f.contentWindow.document);
+                      if (fdoc && fdoc.body) checkTexts.push(fdoc.body.textContent || '');
+                    }} catch (e) {{}}
+                  }}
+                  for (const txt of checkTexts) {{
+                    if (txt.includes("Server Error in '/SupplyChainAdvantage'") || (txt.includes('Export [') && txt.includes('was not found'))) {{
+                      log('Detected HighJump Server Error (Export was not found). Returning to rerun Query before exporting...');
+                      if (typeof sessionStorage !== 'undefined' && sessionStorage.removeItem) {{
+                        sessionStorage.setItem('eflNexusLoadingHistoryRecoveryNeeded', '1');
+                        sessionStorage.removeItem('eflNexusLoadingHistoryQuerySubmitted');
+                        sessionStorage.removeItem('eflNexusLoadingHistoryExportSubmitted');
+                      }}
+                      exportSubmitted = false;
+                      exportClickCount = 0;
+                      queryClickCount = 0;
+                      lastQueryClickTime = 0;
+                      if (window.history && typeof window.history.back === 'function' && window.history.length > 1) {{
+                        window.history.back();
+                      }} else {{
+                        window.location.reload();
+                      }}
+                      return;
+                    }}
+                  }}
+                }} catch (e) {{}}
+
+                // A failed export can restore this report from the browser's
+                // back-forward cache without re-running the page-load hook.
+                // Consume the recovery marker here so the restored page always
+                // performs a fresh Query and obtains a valid export token.
+                if (sessionStorage.getItem('eflNexusLoadingHistoryRecoveryNeeded') === '1') {{
+                  sessionStorage.removeItem('eflNexusLoadingHistoryRecoveryNeeded');
+                  sessionStorage.removeItem('eflNexusLoadingHistoryQuerySubmitted');
+                  sessionStorage.removeItem('eflNexusLoadingHistoryExportSubmitted');
+                  queryClickCount = 0;
+                  lastQueryClickTime = 0;
+                  lastQueriedGatepass = '';
+                  exportClickCount = 0;
+                  lastExportClickTime = 0;
+                  exportSubmitted = false;
+                }}
+
+                const username = document.querySelector("hj-textbox[data-hj-test-id='username'] input, input.k-textbox[placeholder='User Name']");
+                const password = document.querySelector("hj-password-textbox[data-hj-test-id='password'] input, input[type='password']");
+                if (username && password && username.getClientRects().length > 0 && password.getClientRects().length > 0) {{
+                  const loginButton = document.querySelector("hj-button[data-hj-test-id='actionButton'] button")
+                    || [...document.querySelectorAll('hj-button button, button')].find(button => button.textContent.trim() === 'Login');
+                  if (loginButton && !sessionStorage.getItem('eflNexusKorberLoginSubmitted')) {{
+                    setValue(username, {user_value});
+                    setValue(password, {password_value});
+                    log('Submitting login form');
+                    loginButton.click();
+                    sessionStorage.setItem('eflNexusKorberLoginSubmitted', '1');
+                  }}
+                  if (attempts < 240) setTimeout(automate, 250);
+                  return;
+                }}
+
+                const menuToggle = document.querySelector("a#menuButtonToggle[data-hj-test-id='menuButtonToggle']");
+                if (menuToggle && !sessionStorage.getItem('eflNexusLoadingHistoryReportOpened')) {{
+                  const menuIsOpen = menuToggle.classList.contains('active') || menuToggle.getAttribute('aria-expanded') === 'true';
+                  if (!menuIsOpen && Date.now() - lastMenuClick > 1000) {{
+                    log('Clicking hamburger menu');
+                    menuToggle.click();
+                    lastMenuClick = Date.now();
+                  }}
+                  const searchBox = document.querySelector("input[data-hj-test-id='menuSearchTextBox']");
+                  if (searchBox && searchBox.getClientRects().length > 0) {{
+                    if (!searchEntered || searchBox.value !== '1992') {{
+                      setValue(searchBox, '1992');
+                      searchBox.dispatchEvent(new Event('keyup', {{ bubbles: true }}));
+                      searchBox.focus();
+                      searchEntered = true;
+                      log('Entered menu code 1992');
+                    }}
+                    const title = [...document.querySelectorAll('a span.title')]
+                      .find(span => span.textContent.trim() === 'Loading History Report' && span.getClientRects().length > 0);
+                    const reportLink = title && title.closest('a');
+                    if (reportLink && reportLink.getClientRects().length > 0) {{
+                      log('Clicking Loading History Report');
+                      // Do not carry a completed query/export state into a new
+                      // report instance; those server-side tokens are per run.
+                      if (typeof sessionStorage.removeItem === 'function') {{
+                        sessionStorage.removeItem('eflNexusLoadingHistoryQuerySubmitted');
+                        sessionStorage.removeItem('eflNexusLoadingHistoryExportSubmitted');
+                        sessionStorage.removeItem('eflNexusLoadingHistoryRecoveryNeeded');
+                        sessionStorage.removeItem('eflNexusLoadingHistoryStoppedAtGatepass');
+                      }}
+                      reportLink.click();
+                      sessionStorage.setItem('eflNexusLoadingHistoryReportOpened', '1');
+                      setTimeout(automate, 250);
+                      return;
+                    }}
+                  }}
+                  if (attempts < 240) setTimeout(automate, 250);
+                  else log('Timed out waiting for the Loading History Report menu item');
+                  return;
+                }}
+
+                if (stopAtGatepass && typeof sessionStorage !== 'undefined' && sessionStorage.getItem('eflNexusLoadingHistoryStoppedAtGatepass') === '1') {{
+                  if (!manualStopBypassed) {{
+                    return;
+                  }}
+                }}
+
+                const hasSubmittedQuery = queryClickCount > 0 || sessionStorage.getItem('eflNexusLoadingHistoryQuerySubmitted') === '1';
+
+                // Step 1: Check for gatepass input and execute query (if not yet submitted)
+                if (!hasSubmittedQuery) {{
+                  const gpInput = findGatepassInput();
+                  if (stopAtGatepass && gpInput) {{
+                    if (!manualStopBypassed) {{
+                      try {{
+                        if (typeof gpInput.focus === 'function') gpInput.focus();
+                        if (typeof gpInput.scrollIntoView === 'function') {{
+                          gpInput.scrollIntoView({{ block: 'center', inline: 'center' }});
+                        }}
+                      }} catch (e) {{}}
+                      log('Gate Pass entry page is ready; waiting for user input.');
+                      sessionStorage.setItem('eflNexusLoadingHistoryStoppedAtGatepass', '1');
+                      return;
+                    }}
+                  }}
+                  if (gpInput && !isTyping) {{
+                    let gp = activeGatepass;
+                    if (!gp) gp = await resolveGatepass();
+                    if (gp && gpInput.value !== gp && gpInput.getAttribute('data-efl-nexus-gatepass-typed') !== gp) {{
+                      isTyping = true;
+                      try {{
+                        queryClickCount = 0;
+                        lastQueryClickTime = 0;
+                        lastQueriedGatepass = '';
+                        exportClickCount = 0;
+                        lastExportClickTime = 0;
+                        exportSubmitted = false;
+                        if (typeof sessionStorage.removeItem === 'function') {{
+                          sessionStorage.removeItem('eflNexusLoadingHistoryQuerySubmitted');
+                          sessionStorage.removeItem('eflNexusLoadingHistoryExportSubmitted');
+                        }}
+                        await typeGatepassIntoInput(gpInput, gp);
+                      }} finally {{
+                        isTyping = false;
+                      }}
+                    }}
+                  }}
+
+                  // Click Query button once gatepass has been typed
+                  const currentVal = (gpInput && gpInput.value ? gpInput.value.trim() : '') || (gpInput ? (gpInput.getAttribute('data-efl-nexus-gatepass-typed') || '') : '');
+                  const targetGp = activeGatepass;
+                  const isReadyToQuery = targetGp ? currentVal === targetGp : currentVal.length > 0;
+
+                  if (isReadyToQuery && !isTyping) {{
+                    const now = Date.now();
+                    if (queryClickCount < 3 && (now - lastQueryClickTime > 2000)) {{
+                      const queryBtn = findQueryButton();
+                      if (queryBtn) {{
+                        log('Found Query button (' + (queryBtn.tagName || 'ELEMENT') + '), executing query (attempt ' + (queryClickCount + 1) + ')');
+                        const clicked = clickQueryButton(queryBtn);
+                        if (clicked) {{
+                          queryClickCount++;
+                          lastQueryClickTime = now;
+                          lastQueriedGatepass = currentVal;
+                          sessionStorage.setItem('eflNexusLoadingHistoryQuerySubmitted', '1');
+                          if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.report_gatepass === 'function') {{
+                            try {{ window.pywebview.api.report_gatepass(currentVal); }} catch (e) {{}}
+                          }}
+                        }}
+                      }} else {{
+                        log('Gatepass is ready (' + currentVal + '), searching for Query button across documents/iframes...');
+                      }}
+                    }}
+                  }}
+                }}
+
+                // Step 2: Execute Export once Query has been submitted
+                const hasExported = exportClickCount > 0 || exportSubmitted || sessionStorage.getItem('eflNexusLoadingHistoryExportSubmitted') === '1';
+                if (hasSubmittedQuery && !hasExported) {{
+                  const now = Date.now();
+                  const timeSinceQuery = lastQueryClickTime > 0 ? (now - lastQueryClickTime) : 2500;
+                  // Allow at least 2500ms after query click for server query roundtrip completion
+                  if (timeSinceQuery >= 2500) {{
+                    const exportBtn = findExportButton();
+                    if (exportBtn) {{
+                      const isDisabled = (exportBtn.classList && (exportBtn.classList.contains('k-state-disabled') || exportBtn.classList.contains('disabled'))) ||
+                                         exportBtn.getAttribute('aria-disabled') === 'true' ||
+                                         exportBtn.getAttribute('disabled') !== null;
+                      let isMaskVisible = false;
+                      try {{
+                        const btnDoc = exportBtn.ownerDocument || document;
+                        const mask = btnDoc.querySelector('.k-loading-mask, .k-loading-image, .k-i-loading') || document.querySelector('.k-loading-mask, .k-loading-image, .k-i-loading');
+                        if (mask && (mask.offsetParent !== null || (mask.getClientRects && mask.getClientRects().length > 0))) {{
+                          isMaskVisible = true;
+                        }}
+                      }} catch (e) {{}}
+
+                      if (isDisabled || isMaskVisible) {{
+                        log('Query in progress (grid loading / Export button disabled), waiting for data before export...');
+                      }} else {{
+                        log('Found active Export button (' + (exportBtn.tagName || 'ELEMENT') + '), executing single export click');
+                        const clicked = clickExportButton(exportBtn);
+                        if (clicked) {{
+                          exportClickCount = 1;
+                          lastExportClickTime = now;
+                        }}
+                      }}
+                    }} else {{
+                      log('Query submitted, searching for Export button across documents/iframes...');
+                    }}
+                  }}
+                }}
+
+                if (attempts < 240) setTimeout(automate, 250);
+                else log('Timed out waiting for Loading History page elements');
+              }};
+              automate();
+
+              const pollLoadingHistoryCommands = async () => {{
+                if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.get_pending_command !== 'function') return;
+                try {{
+                  const cmd = await window.pywebview.api.get_pending_command();
+                  if (cmd && (cmd.gatepass || cmd.action === 'query_and_export' || cmd.action === 'download_loading_history')) {{
+                    const newGp = String(cmd.gatepass || '').trim();
+                    log('Received command to query and export gatepass: ' + newGp);
+                    activeGatepass = newGp;
+                    manualStopBypassed = true;
+                    try {{
+                      sessionStorage.removeItem('eflNexusLoadingHistoryStoppedAtGatepass');
+                      sessionStorage.removeItem('eflNexusLoadingHistoryQuerySubmitted');
+                      sessionStorage.removeItem('eflNexusLoadingHistoryExportSubmitted');
+                    }} catch (e) {{}}
+                    queryClickCount = 0;
+                    lastQueryClickTime = 0;
+                    lastQueriedGatepass = '';
+                    exportClickCount = 0;
+                    lastExportClickTime = 0;
+                    exportSubmitted = false;
+                    attempts = 0;
+                    automate();
+                  }}
+                }} catch (e) {{}}
+              }};
+              if (typeof setInterval === 'function') {{
+                setInterval(pollLoadingHistoryCommands, 500);
+              }}
+            }})();
+        """)
+
+    stop_watcher = threading.Event()
+
+    def watch_downloads() -> None:
+        import shutil
+        downloads_dir = get_downloads_folder()
+        try:
+            initial_files = {p.resolve(): p.stat().st_mtime for p in downloads_dir.iterdir() if p.is_file()}
+        except Exception:
+            initial_files = {}
+
+        moved_files: set[Path] = set()
+
+        while not stop_watcher.is_set():
+            time.sleep(0.5)
+            try:
+                for file_path in downloads_dir.iterdir():
+                    if not file_path.is_file():
+                        continue
+                    suffix = file_path.suffix.lower()
+                    if suffix not in (".xlsx", ".xls", ".csv"):
+                        continue
+                    resolved_file = file_path.resolve()
+                    if resolved_file in moved_files:
+                        continue
+                    if resolved_file in initial_files:
+                        try:
+                            if file_path.stat().st_mtime <= initial_files[resolved_file]:
+                                continue
+                        except Exception:
+                            continue
+
+                    # Check for companion .crdownload
+                    companion = file_path.with_name(file_path.name + ".crdownload")
+                    if companion.exists():
+                        continue
+
+                    # Check for any active .crdownload matching stem
+                    has_cr = any(cr.name.startswith(file_path.stem) for cr in downloads_dir.glob("*.crdownload"))
+                    if has_cr:
+                        continue
+
+                    # Ensure file is completely written (not locked and size > 0)
+                    try:
+                        sz1 = file_path.stat().st_size
+                        if sz1 == 0:
+                            continue
+                        time.sleep(0.3)
+                        sz2 = file_path.stat().st_size
+                        if sz1 != sz2:
+                            continue
+                        with open(file_path, "rb"):
+                            pass
+                    except (OSError, PermissionError):
+                        continue
+
+                    # Resolve destination folder
+                    active_gp = bridge.get_gatepass() or gatepass
+                    active_jid = bridge.get_job_id() or job_id
+                    active_cli = bridge.get_client() or client
+                    if not active_jid or not active_cli:
+                        p_map = load_persisted_job_map()
+                        if active_gp:
+                            for m in p_map.values():
+                                if _clean(str(m.get("gatepass", ""))) == active_gp:
+                                    if not active_jid:
+                                        active_jid = _clean(str(m.get("job_id", "")))
+                                    if not active_cli:
+                                        active_cli = _clean(str(m.get("client", "")))
+                                    break
+
+                    dest_folder = get_job_download_folder(job_id=active_jid, gatepass=active_gp, client=active_cli)
+                    if dest_folder.resolve() == downloads_dir.resolve():
+                        moved_files.add(resolved_file)
+                        continue
+
+                    dest_path = get_unique_download_path(file_path.name, folder=dest_folder)
+                    try:
+                        shutil.move(str(file_path), str(dest_path))
+                        moved_files.add(dest_path.resolve())
+                        print(f"[Loading History] Organized report file -> {dest_path.resolve()}", flush=True)
+
+                        try:
+                            dl_event_file = _download_event_file()
+                            dl_event_file.parent.mkdir(parents=True, exist_ok=True)
+                            dl_event_file.write_text(json.dumps({
+                                "action": "file_downloaded",
+                                "filename": dest_path.name,
+                                "path": str(dest_path.resolve()),
+                                "folder": dest_path.parent.name,
+                                "folder_path": str(dest_path.parent.resolve()),
+                                "size": dest_path.stat().st_size,
+                                "time": time.time(),
+                                "job_id": active_jid,
+                                "gatepass": active_gp,
+                                "client": active_cli,
+                            }), encoding="utf-8")
+                        except Exception:
+                            pass
+                    except Exception as move_err:
+                        print(f"[Loading History] Error moving {file_path.name}: {move_err}", flush=True)
+            except Exception:
+                pass
+
+    watcher_thread = threading.Thread(target=watch_downloads, daemon=True)
+    watcher_thread.start()
+
+    window.events.loaded += automate_loading_history
+    try:
+        webview.start(gui="edgechromium", private_mode=True)
+    finally:
+        stop_watcher.set()
 
 
 def _clean(value: str) -> str:
@@ -1579,6 +3140,11 @@ def extract_jobs_with_status(
         raw_status = ""
         if status_column is not None and status_column < len(row):
             raw_status = row[status_column]
+        if not _clean(raw_status):
+            raw_status = next(
+                (cell for cell in row if normalize_reconciliation_status(cell) in {"Pending", "In Progress"}),
+                "",
+            )
         rec = {
             "job_id": value,
             "status": normalize_reconciliation_status(raw_status),
@@ -1667,8 +3233,19 @@ class WebsiteDataGrabberApp:
         self.job_ids: list[str] = []
         self.records: list[dict[str, str]] = []
         self.result_path = _result_file()
+        # The result file persists across runs. Do not show it until the browser
+        # opened by this app instance has written a newer live snapshot.
+        self._live_result_baseline_mtime_ns = 0
         self.browser_log_path = _browser_log_file()
         self.download_event_path = _download_event_file()
+        self.loading_history_event_path = _loading_history_event_file()
+        self._last_loading_history_time = 0.0
+        if self.loading_history_event_path.exists():
+            try:
+                event = json.loads(self.loading_history_event_path.read_text(encoding="utf-8"))
+                self._last_loading_history_time = float(event.get("time", 0.0))
+            except Exception:
+                pass
         self._last_download_time = 0.0
         if self.download_event_path.exists():
             try:
@@ -1679,7 +3256,10 @@ class WebsiteDataGrabberApp:
         self._browser_log_handle = None
         self.browser_process = None
         self.browser_hwnd = None
+        self.loading_history_process = None
+        self.loading_history_hwnd = None
         self._browser_embed_attempts = 0
+        self._loading_history_embed_attempts = 0
         settings = getattr(self.config_store, "config", {}) if self.config_store is not None else {}
         self.login_url = tk.StringVar(value=settings.get("data_grabber_login_url", DEFAULT_LOGIN_URL))
         self.username = tk.StringVar(value=settings.get("data_grabber_user", ""))
@@ -1692,12 +3272,13 @@ class WebsiteDataGrabberApp:
         self.reconciliation_link_text = tk.StringVar(value="Reconciliation")
         self.job_header = tk.StringVar(value="Job ID")
         initial_status = (
-            "Ready. Click 'Open Internal Browser' to launch the portal session."
+            "Ready. Click 'Open Both Browsers' to launch Reconciliation and Loading History."
             if self.username.get() and self.password.get()
             else "Enter portal credentials in Settings to automatically sign in and open Reconciliation."
         )
         self.status = tk.StringVar(value=initial_status)
         self._build()
+        self.root.after(500, self._poll_internal_browser_results)
 
     def _build(self):
         page = tk.Frame(self.container, bg="#faf8f2", padx=16, pady=8)
@@ -1708,7 +3289,7 @@ class WebsiteDataGrabberApp:
         header_bar.pack(fill="x", pady=(0, 6))
 
         tk.Label(header_bar, text="Pending Jobs", bg="#faf8f2", fg="#0f172a", font=("Segoe UI", 13, "bold")).pack(side="left")
-        self.run_button = ttk.Button(header_bar, text="Open Internal Browser", command=self.start)
+        self.run_button = ttk.Button(header_bar, text="Open Both Browsers", command=self.start)
         self.run_button.pack(side="left", padx=(14, 0))
         self.restart_button = ttk.Button(header_bar, text="🔄 Restart Browser", command=self.restart_browser)
         self.restart_button.pack(side="left", padx=(6, 0))
@@ -1720,12 +3301,13 @@ class WebsiteDataGrabberApp:
         results = tk.Frame(page, bg="#ffffff", highlightbackground="#e2e8f0", highlightthickness=1, padx=10, pady=6)
         results.pack(fill="both", expand=True)
         results.columnconfigure(0, weight=1)
+        results.columnconfigure(1, weight=1)
         results.rowconfigure(0, weight=3, minsize=520)
         results.rowconfigure(1, weight=1, minsize=100)
 
         # ---------------- Top: Internal Reconciliation Browser ----------------
         browser_panel = tk.Frame(results, bg="#ffffff")
-        browser_panel.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+        browser_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 3), pady=(0, 6))
         browser_panel.columnconfigure(0, weight=1)
         browser_panel.rowconfigure(1, weight=1)
 
@@ -1778,13 +3360,46 @@ class WebsiteDataGrabberApp:
         self.browser_host.grid(row=1, column=0, sticky="nsew")
         self.browser_host.bind("<Configure>", self._resize_internal_browser)
         tk.Label(
-            self.browser_host, text="The internal browser will appear here after you click Open Internal Browser.",
+            self.browser_host, text="The Reconciliation browser will appear here after you click Open Both Browsers.",
             bg="#e2e8f0", fg="#64748b", font=("Segoe UI", 10), wraplength=600,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        # ---------------- Top-right: Loading History Browser ----------------
+        loading_panel = tk.Frame(results, bg="#ffffff")
+        loading_panel.grid(row=0, column=1, sticky="nsew", padx=(3, 0), pady=(0, 6))
+        loading_panel.columnconfigure(0, weight=1)
+        loading_panel.rowconfigure(1, weight=1)
+
+        loading_header = tk.Frame(loading_panel, bg="#ffffff")
+        loading_header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        tk.Label(
+            loading_header,
+            text="Loading History — enter Gate Pass manually",
+            bg="#ffffff",
+            fg="#0f172a",
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left")
+
+        self.loading_history_host = tk.Frame(
+            loading_panel,
+            bg="#e2e8f0",
+            highlightbackground="#cbd5e1",
+            highlightthickness=1,
+        )
+        self.loading_history_host.grid(row=1, column=0, sticky="nsew")
+        self.loading_history_host.bind("<Configure>", self._resize_loading_history_browser)
+        tk.Label(
+            self.loading_history_host,
+            text="Loading History will open here and stop at the Gate Pass entry page.",
+            bg="#e2e8f0",
+            fg="#64748b",
+            font=("Segoe UI", 10),
+            wraplength=420,
         ).place(relx=0.5, rely=0.5, anchor="center")
 
         # ---------------- Bottom: Job Console (IDs, Status & Actions) ----------------
         console_panel = tk.Frame(results, bg="#ffffff")
-        console_panel.grid(row=1, column=0, sticky="nsew")
+        console_panel.grid(row=1, column=0, columnspan=2, sticky="nsew")
         console_panel.columnconfigure(0, weight=1)
         console_panel.rowconfigure(1, weight=1)
 
@@ -1871,6 +3486,22 @@ class WebsiteDataGrabberApp:
             cursor="hand2",
         )
         self.download_files_btn.pack(side="left", padx=(10, 0))
+
+        self.download_loading_history_btn = tk.Button(
+            action_bar,
+            text="📥 Download Loading History",
+            command=self.download_selected_job_loading_history,
+            bg="#2563eb",
+            fg="#ffffff",
+            activebackground="#1d4ed8",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=16,
+            pady=6,
+            cursor="hand2",
+        )
+        self.download_loading_history_btn.pack(side="left", padx=(10, 0))
 
         self.open_folder_btn = tk.Button(
             action_bar,
@@ -2014,8 +3645,12 @@ class WebsiteDataGrabberApp:
         # Best-effort persist credentials
         self.save_credentials(show_success=False)
         if self.browser_process is not None and self.browser_process.poll() is None:
-            self.status.set("The internal browser is already open. Use its Export Job IDs button after reaching Reconciliation.")
+            self.status.set("Both portal browsers are open side by side.")
             self.set_browser_visible(True)
+            if self.loading_history_process is None or self.loading_history_process.poll() is not None:
+                self.start_loading_history_browser({"stop_at_gatepass": True})
+            else:
+                self.set_loading_history_visible(True)
             return
 
         # Pre-flight check: ensure pywebview is available in the current runtime
@@ -2033,7 +3668,13 @@ class WebsiteDataGrabberApp:
             return
 
         try:
-            # Preserve self.result_path and persistent cache across restarts
+            # Result files persist across runs. Record the existing timestamp so
+            # only a snapshot written by this newly started browser is displayed.
+            try:
+                self._live_result_baseline_mtime_ns = self.result_path.stat().st_mtime_ns
+            except OSError:
+                self._live_result_baseline_mtime_ns = 0
+            self._clear_job_console()
             self.browser_log_path.parent.mkdir(parents=True, exist_ok=True)
             if getattr(sys, "frozen", False):
                 command = [sys.executable, "--internal-browser", str(self.result_path), login_url]
@@ -2064,6 +3705,7 @@ class WebsiteDataGrabberApp:
             self.status.set("Internal browser opened. Logging in and opening Reconciliation automatically…")
             self._browser_embed_attempts = 0
             self.root.after(100, self._find_and_embed_internal_browser)
+            self.start_loading_history_browser({"stop_at_gatepass": True})
             self._poll_internal_browser_results()
         except Exception as exc:
             messagebox.showerror("Internal browser unavailable", f"Could not start the internal browser: {exc}")
@@ -2178,13 +3820,27 @@ class WebsiteDataGrabberApp:
             self.root.clipboard_append("\n".join(lines))
             self.status.set(f"Copied {len(lines)} selected row(s) to clipboard.")
 
+    def _clear_job_console(self) -> None:
+        """Remove stale rows before a new browser session supplies live data."""
+        self.records = []
+        self.job_ids = []
+        if hasattr(self, "tree") and isinstance(self.tree, ttk.Treeview):
+            for child in self.tree.get_children():
+                self.tree.delete(child)
+
     def _poll_internal_browser_results(self):
         try:
-            if self.result_path.exists():
+            browser_is_live = self.browser_process is not None and self.browser_process.poll() is None
+            result_is_current_session = (
+                browser_is_live
+                and self.result_path.exists()
+                and self.result_path.stat().st_mtime_ns > self._live_result_baseline_mtime_ns
+            )
+            if result_is_current_session:
                 payload = json.loads(self.result_path.read_text(encoding="utf-8"))
                 ids = payload.get("job_ids", [])
                 records = payload.get("records", [])
-                if records and isinstance(records, list):
+                if isinstance(records, list):
                     if records != self.records:
                         self._show_results(records)
                 elif isinstance(ids, list) and ids != self.job_ids:
@@ -2206,8 +3862,154 @@ class WebsiteDataGrabberApp:
                     self.status.set(f"✓ Downloaded '{fn}' (saved to {loc_text})")
         except Exception:
             pass
-        if self.browser_process is not None and self.browser_process.poll() is None:
-            self.root.after(750, self._poll_internal_browser_results)
+        try:
+            event_file = getattr(self, "loading_history_event_path", None) or _loading_history_event_file()
+            if event_file.exists():
+                event = json.loads(event_file.read_text(encoding="utf-8"))
+                event_time = float(event.get("time", 0.0))
+                if event.get("action") in ("open_loading_history", "download_loading_history") and event_time > self._last_loading_history_time:
+                    self._last_loading_history_time = event_time
+                    self.start_loading_history_browser(event)
+        except Exception:
+            pass
+        poll_interval = 750 if (self.browser_process is not None and self.browser_process.poll() is None) else 1500
+        self.root.after(poll_interval, self._poll_internal_browser_results)
+
+    def _load_persisted_results_on_startup(self):
+        """Load previously persisted jobs into the Job Console so it's not blank on startup."""
+        loaded = False
+        if self.result_path and self.result_path.exists():
+            try:
+                payload = json.loads(self.result_path.read_text(encoding="utf-8"))
+                recs = payload.get("records") or payload.get("job_ids")
+                if recs:
+                    print(f"[WebsiteDataGrabber] Loaded {len(recs)} cached job(s) from {self.result_path.name} on startup.", flush=True)
+                    self._show_results(recs, play_sound_alert=False)
+                    loaded = True
+            except Exception as exc:
+                print(f"[WebsiteDataGrabber] Notice: Could not read startup result file: {exc}", flush=True)
+        if not loaded:
+            persisted = load_persisted_job_map()
+            if persisted:
+                recs = list(persisted.values())
+                print(f"[WebsiteDataGrabber] Loaded {len(recs)} cached job(s) from persistent job map on startup.", flush=True)
+                self._show_results(recs, play_sound_alert=False)
+                loaded = True
+        if not loaded:
+            print("[WebsiteDataGrabber] Job Console ready (no previous jobs cached). Click 'Open Both Browsers'.", flush=True)
+
+    def start_loading_history_browser(self, job_context: dict[str, Any] | None = None) -> None:
+        """Open a lightweight external WebView2 window for Loading History or dispatch commands."""
+        stop_at_gatepass = bool((job_context or {}).get("stop_at_gatepass"))
+        gatepass = _clean(str((job_context or {}).get("gatepass") or ""))
+        job_id = _clean(str((job_context or {}).get("job_id") or ""))
+        client = _clean(str((job_context or {}).get("client") or ""))
+
+        if stop_at_gatepass:
+            gatepass = ""
+            job_id = ""
+            client = ""
+
+        if not stop_at_gatepass and (not gatepass or not client) and job_id:
+            for rec in getattr(self, "records", []):
+                if _clean(str(rec.get("job_id", ""))) == job_id:
+                    if not gatepass and rec.get("gatepass"):
+                        gatepass = _clean(str(rec["gatepass"]))
+                    if not client and rec.get("client"):
+                        client = _clean(str(rec["client"]))
+                    break
+        if not stop_at_gatepass and (not gatepass or not client or not job_id):
+            try:
+                persisted = load_persisted_job_map()
+                if job_id and job_id.casefold() in persisted:
+                    mapped = persisted[job_id.casefold()]
+                    if not gatepass and mapped.get("gatepass"):
+                        gatepass = _clean(str(mapped["gatepass"]))
+                    if not client and mapped.get("client"):
+                        client = _clean(str(mapped["client"]))
+                elif gatepass:
+                    for mapped in persisted.values():
+                        if _clean(str(mapped.get("gatepass", ""))) == gatepass:
+                            if not job_id and mapped.get("job_id"):
+                                job_id = _clean(str(mapped["job_id"]))
+                            if not client and mapped.get("client"):
+                                client = _clean(str(mapped["client"]))
+                            break
+            except Exception:
+                pass
+
+        if not stop_at_gatepass and not gatepass and getattr(self, "active_gatepass", None):
+            gatepass = _clean(str(self.active_gatepass))
+        if not stop_at_gatepass and not job_id and getattr(self, "active_job_id", None):
+            job_id = _clean(str(self.active_job_id))
+        if not stop_at_gatepass and not client and getattr(self, "active_client", None):
+            client = _clean(str(self.active_client))
+
+        if self.loading_history_process is not None and self.loading_history_process.poll() is None:
+            self.set_loading_history_visible(True)
+            if gatepass:
+                self._send_loading_history_command(
+                    "query_and_export",
+                    gatepass=gatepass,
+                    job_id=job_id,
+                    client=client,
+                )
+                self.status.set(f"Entering Gate Pass '{gatepass}' in Loading History, querying and exporting…")
+            elif stop_at_gatepass:
+                self.status.set("Körber Loading History is open side by side.")
+            else:
+                self.status.set("Körber Loading History is already open.")
+            return
+
+        try:
+            import korber_login_bot as korber_login
+            url, username, password = korber_login.get_credentials()
+            if not username or not password:
+                raise ValueError("Körber credentials are not configured. Add them in Settings before downloading Loading History.")
+
+            try:
+                import webview  # noqa: F401
+            except ImportError as exc:
+                raise RuntimeError("pywebview is required to open the lightweight Loading History browser.") from exc
+
+            if getattr(sys, "frozen", False):
+                command = [sys.executable, "--loading-history-browser", url]
+            else:
+                command = [sys.executable, str(Path(__file__).resolve()), "--loading-history-browser", url]
+            if gatepass:
+                command.append(gatepass)
+            if job_id:
+                command.append(job_id)
+            if client:
+                command.append(client)
+            child_env = os.environ.copy()
+            child_env["EFL_NEXUS_KORBER_USER"] = username
+            child_env["EFL_NEXUS_KORBER_PASS"] = password
+            if stop_at_gatepass:
+                child_env["EFL_NEXUS_LOADING_HISTORY_STOP_AT_GATEPASS"] = "1"
+            if gatepass:
+                child_env["EFL_NEXUS_KORBER_GATEPASS"] = gatepass
+            if job_id:
+                child_env["EFL_NEXUS_KORBER_JOB_ID"] = job_id
+            if client:
+                child_env["EFL_NEXUS_KORBER_CLIENT"] = client
+            self.loading_history_process = subprocess.Popen(command, env=child_env.copy())
+            child_env.pop("EFL_NEXUS_KORBER_USER", None)
+            child_env.pop("EFL_NEXUS_KORBER_PASS", None)
+            child_env.pop("EFL_NEXUS_KORBER_GATEPASS", None)
+            child_env.pop("EFL_NEXUS_KORBER_JOB_ID", None)
+            child_env.pop("EFL_NEXUS_KORBER_CLIENT", None)
+            child_env.pop("EFL_NEXUS_LOADING_HISTORY_STOP_AT_GATEPASS", None)
+            self._loading_history_embed_attempts = 0
+            self.root.after(100, self._find_and_embed_loading_history_browser)
+            if stop_at_gatepass:
+                self.status.set("Opening Reconciliation and Loading History side by side…")
+            else:
+                context_note = f" for gate pass {gatepass}" if gatepass else ""
+                self.status.set(f"Opening lightweight Körber Loading History browser{context_note}…")
+        except Exception as exc:
+            messagebox.showerror("Loading History", f"Could not open Körber Loading History: {exc}")
+            self.status.set("Could not open Körber Loading History.")
 
     def _read_browser_log(self) -> str:
         """Read any error messages captured in the browser process log."""
@@ -2226,6 +4028,11 @@ class WebsiteDataGrabberApp:
     @staticmethod
     def _find_window_for_process(process_id: int):
         """Return the visible top-level WebView host window for the helper process."""
+        if not isinstance(process_id, int) or process_id <= 0:
+            return None
+        current_pid = os.getpid()
+        if process_id == current_pid:
+            return None
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         candidates = []
         enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -2234,12 +4041,12 @@ class WebsiteDataGrabberApp:
         def collect(hwnd, _lparam):
             window_pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
-            if window_pid.value == process_id and user32.IsWindowVisible(hwnd):
+            if int(window_pid.value) == int(process_id) and user32.IsWindowVisible(hwnd):
                 length = user32.GetWindowTextLengthW(hwnd)
                 title = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, title, length + 1)
                 t_val = title.value
-                if "Reconciliation Browser" in t_val or "EFL NEXUS" in t_val:
+                if "Reconciliation Browser" in t_val or "Loading History" in t_val or "EFL NEXUS" in t_val:
                     candidates.append(hwnd)
             return True
 
@@ -2249,6 +4056,8 @@ class WebsiteDataGrabberApp:
     def _find_and_embed_internal_browser(self):
         process = self.browser_process
         if process is None:
+            return
+        if not isinstance(getattr(process, "pid", None), int):
             return
 
         # Check if the helper process terminated prematurely
@@ -2280,12 +4089,60 @@ class WebsiteDataGrabberApp:
         else:
             self.status.set("The internal browser did not become available for embedding. It may be running as a floating window.")
 
+    def _find_and_embed_loading_history_browser(self):
+        process = self.loading_history_process
+        if process is None:
+            return
+        if not isinstance(getattr(process, "pid", None), int):
+            return
+        if process.poll() is not None:
+            self.loading_history_process = None
+            self.loading_history_hwnd = None
+            self.status.set("The Loading History browser closed unexpectedly.")
+            return
+        if self.loading_history_hwnd:
+            return
+
+        hwnd = self._find_window_for_process(process.pid)
+        if hwnd:
+            try:
+                self._embed_loading_history_browser(hwnd)
+                self.status.set("Reconciliation and Loading History are open side by side.")
+                return
+            except Exception as exc:
+                self.status.set(f"Could not embed Loading History: {exc}")
+                return
+        self._loading_history_embed_attempts += 1
+        if self._loading_history_embed_attempts < 150:
+            self.root.after(100, self._find_and_embed_loading_history_browser)
+        else:
+            self.status.set("Loading History did not become available for embedding.")
+
     def _embed_internal_browser(self, hwnd):
         """Reparent the helper's WebView2 window into Tool 6's browser frame."""
         if sys.platform != "win32":
             raise RuntimeError("Internal browser embedding is supported on Windows only.")
         self.browser_host.update_idletasks()
         host_hwnd = int(self.browser_host.winfo_id())
+
+        self._reparent_browser_window(hwnd, host_hwnd)
+        self.browser_hwnd = hwnd
+        self._resize_internal_browser()
+
+    def _embed_loading_history_browser(self, hwnd):
+        """Reparent Loading History into its side-by-side host frame."""
+        if sys.platform != "win32":
+            raise RuntimeError("Loading History embedding is supported on Windows only.")
+        self.loading_history_host.update_idletasks()
+        host_hwnd = int(self.loading_history_host.winfo_id())
+
+        self._reparent_browser_window(hwnd, host_hwnd)
+        self.loading_history_hwnd = hwnd
+        self._resize_loading_history_browser()
+
+    @staticmethod
+    def _reparent_browser_window(hwnd, host_hwnd):
+        """Attach a top-level helper window to a Tk host HWND."""
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -2301,11 +4158,15 @@ class WebsiteDataGrabberApp:
 
         GWL_STYLE, GWL_EXSTYLE = -16, -20
         WS_CHILD, WS_VISIBLE = 0x40000000, 0x10000000
-        chrome = 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000
+        WS_CLIPCHILDREN = 0x02000000
+        chrome = 0x00C00000 | 0x00040000 | 0x00080000 | 0x00020000 | 0x00010000 | 0x80000000 | 0x01000000
         user32.ShowWindow(hwnd, 0)
         style = user32.GetWindowLongW(hwnd, GWL_STYLE)
         user32.SetWindowLongW(hwnd, GWL_STYLE, (style & ~chrome) | WS_CHILD | WS_VISIBLE)
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, 0)
+
+        host_style = user32.GetWindowLongW(host_hwnd, GWL_STYLE)
+        user32.SetWindowLongW(host_hwnd, GWL_STYLE, host_style | WS_CLIPCHILDREN)
 
         ctypes.set_last_error(0)
         user32.SetParent(hwnd, host_hwnd)
@@ -2314,8 +4175,11 @@ class WebsiteDataGrabberApp:
             err = ctypes.get_last_error()
             raise OSError(err, f"Windows could not attach the browser window (window={hwnd}, host={host_hwnd}, actual={actual_parent})")
 
-        self.browser_hwnd = hwnd
-        self._resize_internal_browser()
+        user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020 | 0x0040)
+
         user32.ShowWindow(hwnd, 5)
 
     def _resize_internal_browser(self, _event=None):
@@ -2333,15 +4197,45 @@ class WebsiteDataGrabberApp:
         except Exception:
             pass
 
+    def _resize_loading_history_browser(self, _event=None):
+        if not self.loading_history_hwnd or not getattr(self, "loading_history_host", None):
+            return
+        try:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+            user32.MoveWindow.restype = wintypes.BOOL
+            user32.MoveWindow(
+                self.loading_history_hwnd, 0, 0,
+                max(1, self.loading_history_host.winfo_width()),
+                max(1, self.loading_history_host.winfo_height()), True,
+            )
+        except Exception:
+            pass
+
     def set_browser_visible(self, visible: bool):
-        """Hide the foreign child window when another NEXUS page is selected."""
-        if not self.browser_hwnd:
+        """Show or hide both embedded browsers with the Pending Jobs page."""
+        self._set_embedded_window_visible(self.browser_hwnd, visible)
+        self._set_embedded_window_visible(self.loading_history_hwnd, visible)
+        if visible:
+            if getattr(self, "root", None) and hasattr(self.root, "after_idle"):
+                self.root.after_idle(self._resize_internal_browser)
+                self.root.after_idle(self._resize_loading_history_browser)
+            else:
+                self._resize_internal_browser()
+                self._resize_loading_history_browser()
+
+    def set_loading_history_visible(self, visible: bool):
+        self._set_embedded_window_visible(self.loading_history_hwnd, visible)
+
+    @staticmethod
+    def _set_embedded_window_visible(hwnd, visible: bool):
+        if not hwnd:
             return
         try:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
             user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
             user32.ShowWindow.restype = wintypes.BOOL
-            user32.ShowWindow(self.browser_hwnd, 5 if visible else 0)
+            user32.ShowWindow(hwnd, 5 if visible else 0)
         except Exception:
             pass
 
@@ -2358,6 +4252,18 @@ class WebsiteDataGrabberApp:
                     pass
         self.browser_process = None
         self.browser_hwnd = None
+        if self.loading_history_process is not None and self.loading_history_process.poll() is None:
+            try:
+                self.loading_history_process.terminate()
+                self.loading_history_process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.loading_history_process.kill()
+                except Exception:
+                    pass
+        self.loading_history_process = None
+        self.loading_history_hwnd = None
+        self._loading_history_embed_attempts = 0
         if self._browser_log_handle and not self._browser_log_handle.closed:
             try:
                 self._browser_log_handle.close()
@@ -2494,7 +4400,7 @@ class WebsiteDataGrabberApp:
                 return element
         return None
 
-    def _show_results(self, items):
+    def _show_results(self, items, play_sound_alert: bool = True):
         records: list[dict[str, str]] = []
         ids: list[str] = []
         for item in items:
@@ -2550,6 +4456,11 @@ class WebsiteDataGrabberApp:
             status_parts.append(f"{other_count} Other")
         breakdown = f" ({', '.join(status_parts)})" if status_parts else ""
         self.status.set(f"Collected {len(records)} Job ID(s){breakdown}. Browser remains open; close it when finished.")
+        print(f"\n[WebsiteDataGrabber] Job Console updated with {len(records)} job(s){breakdown}:", flush=True)
+        for r in records[:10]:
+            print(f"  -> Job: {r.get('job_id')} | Client: {r.get('client', '')} | Gatepass: {r.get('gatepass', '')} | Status: {r.get('status', '')}", flush=True)
+        if len(records) > 10:
+            print(f"  -> ... and {len(records) - 10} more jobs.", flush=True)
 
         # Check for newly detected pending jobs to play the notification sound
         current_pending = {
@@ -2558,7 +4469,7 @@ class WebsiteDataGrabberApp:
             if r.get("status") == "Pending" and r.get("job_id")
         }
         new_pending = current_pending - getattr(self, "_seen_pending_ids", set())
-        if new_pending and getattr(self, "sound_enabled", None) and self.sound_enabled.get():
+        if play_sound_alert and new_pending and getattr(self, "sound_enabled", None) and self.sound_enabled.get():
             self.play_alert()
         self._seen_pending_ids = current_pending
 
@@ -2575,6 +4486,25 @@ class WebsiteDataGrabberApp:
         if not job_id:
             return
 
+        active_gp = ""
+        active_client = ""
+        for rec in getattr(self, "records", []):
+            if str(rec.get("job_id", "")).strip() == job_id:
+                active_gp = str(rec.get("gatepass") or "").strip()
+                active_client = str(rec.get("client") or "").strip()
+                break
+        if not active_gp:
+            try:
+                persisted = load_persisted_job_map()
+                if job_id in persisted:
+                    active_gp = str(persisted[job_id].get("gatepass") or "").strip()
+                    if not active_client:
+                        active_client = str(persisted[job_id].get("client") or "").strip()
+            except Exception:
+                pass
+        self.active_job_id = job_id
+        self.active_gatepass = active_gp
+
         # Check if browser helper process is active
         if self.browser_process is None or self.browser_process.poll() is not None:
             if not getattr(self, "driver", None):
@@ -2584,7 +4514,7 @@ class WebsiteDataGrabberApp:
                     f"Would you like to open it now to start job '{job_id}'?",
                 ):
                     self.start()
-                    self._send_browser_command("start_job", job_id=job_id)
+                    self._send_browser_command("start_job", job_id=job_id, gatepass=active_gp, client=active_client)
                     self._notify_job_started(job_id)
                 return
 
@@ -2618,7 +4548,7 @@ class WebsiteDataGrabberApp:
                 messagebox.showerror("Selenium Error", f"Failed to trigger start: {exc}")
                 return
 
-        sent = self._send_browser_command("start_job", job_id=job_id)
+        sent = self._send_browser_command("start_job", job_id=job_id, gatepass=active_gp, client=active_client)
         if sent:
             self.status.set(f"Sent Start request for Job ID '{job_id}' to the portal browser...")
             self._notify_job_started(job_id)
@@ -2716,6 +4646,50 @@ class WebsiteDataGrabberApp:
             target_sub = get_job_download_folder(job_id, gatepass, client).name
             self.status.set(f"Requested file download for Job ID '{job_id}' (saving to folder '{target_sub}')...")
 
+    def download_selected_job_loading_history(self):
+        """Request the Loading History browser to enter gatepass, query, and export for the selected job."""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showinfo("Select Job", "Please select a job from the list first.")
+            return
+        vals = self.tree.item(selected[0], "values")
+        if not vals:
+            return
+        job_id = str(vals[0]).strip()
+        if not job_id:
+            return
+
+        matched_record = next(
+            (r for r in self.records if str(r.get("job_id", "")).strip().casefold() == job_id.casefold()),
+            None,
+        )
+        gatepass = matched_record.get("gatepass", "") if matched_record else ""
+        client = matched_record.get("client", "") if matched_record else ""
+        if not client and len(vals) > 1:
+            client = str(vals[1]).strip()
+
+        if not gatepass:
+            persisted = load_persisted_job_map()
+            mapped = persisted.get(job_id.casefold())
+            if mapped and mapped.get("gatepass"):
+                gatepass = str(mapped["gatepass"]).strip()
+                if not client and mapped.get("client"):
+                    client = str(mapped["client"]).strip()
+
+        if not gatepass:
+            messagebox.showwarning(
+                "Gate Pass Not Found",
+                f"No Gate Pass is associated with Job ID '{job_id}'.\nPlease enter the Gate Pass manually in the Loading History browser.",
+            )
+            return
+
+        self.start_loading_history_browser({
+            "job_id": job_id,
+            "gatepass": gatepass,
+            "client": client,
+            "stop_at_gatepass": False,
+        })
+
     def open_selected_job_folder(self):
         """Open the target download folder for the currently selected job in Windows Explorer."""
         selected = self.tree.selection()
@@ -2764,6 +4738,17 @@ class WebsiteDataGrabberApp:
             return True
         except Exception as exc:
             messagebox.showerror("Command Error", f"Could not send command to browser: {exc}")
+            return False
+
+    def _send_loading_history_command(self, action: str, **kwargs) -> bool:
+        cmd_file = _loading_history_command_file()
+        try:
+            cmd_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"action": action, "timestamp": time.time(), **kwargs}
+            cmd_file.write_text(json.dumps(payload), encoding="utf-8")
+            return True
+        except Exception as exc:
+            messagebox.showerror("Command Error", f"Could not send command to Loading History browser: {exc}")
             return False
 
     def _is_action_column(self, event_x: int) -> bool:
@@ -2919,6 +4904,11 @@ class WebsiteDataGrabberApp:
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "--internal-browser":
         run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LOGIN_URL)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--loading-history-browser":
+        gatepass_arg = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("EFL_NEXUS_KORBER_GATEPASS", "")
+        job_id_arg = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("EFL_NEXUS_KORBER_JOB_ID", "")
+        client_arg = sys.argv[5] if len(sys.argv) > 5 else os.environ.get("EFL_NEXUS_KORBER_CLIENT", "")
+        run_loading_history_browser(sys.argv[2], gatepass=gatepass_arg, job_id=job_id_arg, client=client_arg)
     else:
         root = tk.Tk()
         root.title("EFL NEXUS — Tool 6: Pending Jobs")

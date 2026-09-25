@@ -3116,6 +3116,14 @@ if __name__ == "__main__":
         from website_data_grabber import run_internal_browser, DEFAULT_LOGIN_URL
         run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LOGIN_URL)
         raise SystemExit(0)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--loading-history-browser":
+        import os
+        from website_data_grabber import run_loading_history_browser
+        gatepass_arg = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("EFL_NEXUS_KORBER_GATEPASS", "")
+        job_id_arg = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("EFL_NEXUS_KORBER_JOB_ID", "")
+        client_arg = sys.argv[5] if len(sys.argv) > 5 else os.environ.get("EFL_NEXUS_KORBER_CLIENT", "")
+        run_loading_history_browser(sys.argv[2], gatepass=gatepass_arg, job_id=job_id_arg, client=client_arg)
+        raise SystemExit(0)
     try:
         import ctypes
         myappid = 'efl.nexus.app.unified'

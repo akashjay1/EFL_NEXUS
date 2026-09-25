@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('version.txt', '.'), ('build.txt', '.'), ('icon_2.ico', '.'), ('icon.ico', '.'), ('aurora_bg.png', '.'), ('credentials.json', '.'), ('efl_users.json', '.'), ('sent_log.xlsx', '.'), ('templates.xlsx', '.'), ('variance_templates.xlsx', '.'), ('assets', 'assets')]
+datas = [('version.txt', '.'), ('build.txt', '.'), ('icon_2.ico', '.'), ('icon.ico', '.'), ('aurora_bg.png', '.'), ('credentials.json', '.'), ('efl_users.json', '.'), ('templates.xlsx', '.'), ('variance_templates.xlsx', '.'), ('assets', 'assets')]
 binaries = []
 hiddenimports = ['pandas', 'openpyxl', 'openpyxl.styles', 'requests', 'dotenv', 'korber_tool', 'reconciliation_tool', 'korber_login_bot', 'outlook_email_gui', 'KPI', 'kpi_profile', 'reconciliation_queue', 'website_data_grabber', 'patch_auditship_credentials', 'gspread', 'oauth2client', 'oauth2client.service_account', 'updater', 'win32com', 'win32com.client', 'pythoncom', 'win32api', 'win32cred', 'winreg', 'customtkinter', 'queue', 'hashlib', 'calendar']
 tmp_ret = collect_all('selenium')

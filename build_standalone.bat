@@ -10,7 +10,22 @@ echo.
 :: runtime into EFL NEXUS's PyInstaller payload and prevent EFL from starting.
 set "PY_CMD=py -3.11"
 set "PYI_CMD=py -3.11 -m PyInstaller"
-echo   [Environment] Using Python 3.11
+
+:: Verify Python 3.11 is operational
+%PY_CMD% -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
+if %errorlevel% neq 0 (
+    python -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
+    if !errorlevel! equ 0 (
+        set "PY_CMD=python"
+        set "PYI_CMD=pyinstaller"
+    ) else (
+        echo [ERROR] Python 3.11 is required but was not found!
+        echo         Please ensure Python 3.11 is installed.
+        pause
+        exit /b 1
+    )
+)
+echo   [Environment] Using Python 3.11 (!PY_CMD!)
 
 :: Read current version and build number
 if not exist "version.txt" (
@@ -52,20 +67,21 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 
-echo [1/5] Building high-speed directory-mode EFL_NEXUS...
-%PYI_CMD% main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=webview --collect-all=pythonnet --collect-all=clr_loader --collect-all=PIL --collect-all=openpyxl --collect-all=customtkinter --collect-all=gspread --collect-all=oauth2client --hidden-import=pandas --hidden-import=openpyxl --hidden-import=openpyxl.styles --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=KPI --hidden-import=kpi_profile --hidden-import=reconciliation_queue --hidden-import=website_data_grabber --hidden-import=patch_auditship_credentials --hidden-import=gspread --hidden-import=oauth2client --hidden-import=oauth2client.service_account --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=win32cred --hidden-import=winreg --hidden-import=customtkinter --hidden-import=queue --hidden-import=hashlib --hidden-import=calendar --add-data "version.txt;." --add-data "build.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "credentials.json;." --add-data "efl_users.json;." --add-data "sent_log.xlsx;." --add-data "templates.xlsx;." --add-data "variance_templates.xlsx;." --add-data "assets;assets"
+echo [1/4] Building high-speed directory-mode EFL_NEXUS...
+%PYI_CMD% main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=webview --collect-all=pythonnet --collect-all=clr_loader --collect-all=PIL --collect-all=openpyxl --collect-all=customtkinter --collect-all=gspread --collect-all=oauth2client --hidden-import=pandas --hidden-import=openpyxl --hidden-import=openpyxl.styles --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=KPI --hidden-import=kpi_profile --hidden-import=reconciliation_queue --hidden-import=website_data_grabber --hidden-import=patch_auditship_credentials --hidden-import=gspread --hidden-import=oauth2client --hidden-import=oauth2client.service_account --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=win32cred --hidden-import=winreg --hidden-import=customtkinter --hidden-import=queue --hidden-import=hashlib --hidden-import=calendar --add-data "version.txt;." --add-data "build.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "credentials.json;." --add-data "efl_users.json;." --add-data "templates.xlsx;." --add-data "variance_templates.xlsx;." --add-data "assets;assets"
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to build EFL_NEXUS
     pause
     exit /b %errorlevel%
 )
 
+echo.
 echo Copying Korber AuditShip runtime into the application package...
-xcopy /e /i /y "Korber_AuditShip" "dist\EFL_NEXUS\Korber_AuditShip" >nul
-if %errorlevel% geq 2 (
+robocopy "Korber_AuditShip" "dist\EFL_NEXUS\Korber_AuditShip" /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS
+if errorlevel 8 (
     echo [ERROR] Failed to package the Korber AuditShip runtime.
     pause
-    exit /b %errorlevel%
+    exit /b 1
 )
 
 echo.
@@ -77,10 +93,19 @@ if %errorlevel% neq 0 (
 
 echo.
 echo Deploying default templates, credentials and assets to dist\EFL_NEXUS...
-for %%F in (templates.xlsx variance_templates.xlsx sent_log.xlsx version.txt icon_2.ico icon.ico aurora_bg.png credentials.json efl_users.json) do (
+for %%F in (templates.xlsx variance_templates.xlsx version.txt build.txt icon_2.ico icon.ico aurora_bg.png credentials.json efl_users.json) do (
     if exist "%%F" copy /y "%%F" "dist\EFL_NEXUS\" >nul
 )
+> "dist\EFL_NEXUS\version.txt" echo(!VER!
+> "dist\EFL_NEXUS\build.txt" echo(!BUILD!
+
+:: Ensure user runtime files and developer state are never packaged into releases
 if exist "dist\EFL_NEXUS\config.json" del /f /q "dist\EFL_NEXUS\config.json"
+if exist "dist\EFL_NEXUS\sent_log.xlsx" del /f /q "dist\EFL_NEXUS\sent_log.xlsx"
+if exist "dist\EFL_NEXUS\reconciliation_queue.json" del /f /q "dist\EFL_NEXUS\reconciliation_queue.json"
+if exist "dist\EFL_NEXUS\updater.log" del /f /q "dist\EFL_NEXUS\updater.log"
+if exist "dist\EFL_NEXUS\.efl_records_cache.json" del /f /q "dist\EFL_NEXUS\.efl_records_cache.json"
+if exist "dist\EFL_NEXUS\.load_reconciliation_tool_settings.json" del /f /q "dist\EFL_NEXUS\.load_reconciliation_tool_settings.json"
 
 echo.
 echo [3/4] Building EFL_NEXUS_Setup.exe (Install Wizard)...
@@ -93,7 +118,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [4/4] Creating GitHub Release ZIP package from directory build...
-python -c "import zipfile, os, pathlib; ver = open('version.txt').read().strip(); zpath = f'dist/EFL_NEXUS_v{ver}.zip'; src_dir = pathlib.Path('dist/EFL_NEXUS'); z = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED); [z.write(f, f.relative_to(src_dir)) for f in src_dir.rglob('*') if f.is_file() and not f.name.endswith('.old')]; z.close(); print('Created release zip:', zpath, f'{os.path.getsize(zpath)/1024/1024:.2f} MB')"
+%PY_CMD% -c "import zipfile, os, pathlib; ver = open('dist/EFL_NEXUS/version.txt').read().strip(); zpath = f'dist/EFL_NEXUS_v{ver}.zip'; src_dir = pathlib.Path('dist/EFL_NEXUS'); z = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED, compresslevel=9); [z.write(f, f.relative_to(src_dir)) for f in src_dir.rglob('*') if f.is_file() and not f.name.endswith('.old')]; z.close(); print('Created release zip:', zpath, f'{os.path.getsize(zpath)/1024/1024:.2f} MB')"
 
 echo.
 echo ========================================================

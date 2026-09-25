@@ -132,7 +132,7 @@ def _download_github_baseline(version: str, target_dir: Path, repo_user: str = G
         print("  [INFO] 'requests' library not available; skipping GitHub baseline download.")
         return None
 
-    clean_ver = version.lstrip("v")
+    clean_ver = re.sub(r"^(EFL_NEXUS_)?v?", "", version.strip(), flags=re.IGNORECASE)
     api_url = f"https://api.github.com/repos/{repo_user}/{repo_name}/releases"
     headers = {"User-Agent": "EFL-Nexus-Patch-Generator"}
 
@@ -150,7 +150,7 @@ def _download_github_baseline(version: str, target_dir: Path, repo_user: str = G
 
     # Priority 1: Full release ZIP matching clean_ver
     for rel in releases:
-        tag = rel.get("tag_name", "").strip().lstrip("v")
+        tag = re.sub(r"^(EFL_NEXUS_)?v?", "", rel.get("tag_name", "").strip(), flags=re.IGNORECASE)
         assets = rel.get("assets", [])
         for asset in assets:
             name = asset.get("name", "")
@@ -165,7 +165,7 @@ def _download_github_baseline(version: str, target_dir: Path, repo_user: str = G
     # Priority 2: Latest full release ZIP of any version
     if not target_asset and releases:
         for rel in releases:
-            tag = rel.get("tag_name", "").strip().lstrip("v")
+            tag = re.sub(r"^(EFL_NEXUS_)?v?", "", rel.get("tag_name", "").strip(), flags=re.IGNORECASE)
             assets = rel.get("assets", [])
             for asset in assets:
                 name = asset.get("name", "")
@@ -219,7 +219,7 @@ def _find_prev_zip(search_dir: Path, new_version: str):
       2. Most recent full-release ZIP for any other version (EFL_NEXUS_v<other>.zip)
       3. If none found, automatically download from GitHub releases into *search_dir*.
     """
-    clean_ver = new_version.lstrip("v")
+    clean_ver = re.sub(r"^(EFL_NEXUS_)?v?", "", new_version.strip(), flags=re.IGNORECASE)
 
     # -- collect full-release ZIPs in search_dir -----------------------------
     full_pattern = re.compile(r"EFL_NEXUS_v([\d.]+)\.zip$", re.IGNORECASE)
@@ -472,7 +472,7 @@ def main() -> None:
             "Could not determine version. Pass --version or ensure "
             "version.txt is present."
         )
-    version = version.lstrip("v").strip()
+    version = re.sub(r"^(EFL_NEXUS_)?v?", "", version.strip(), flags=re.IGNORECASE)
 
     # Resolve build number
     if args.build is not None:

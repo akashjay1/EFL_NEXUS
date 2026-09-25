@@ -449,6 +449,8 @@ class WebsiteDataGrabberUITests(unittest.TestCase):
             target = Path(tmpdir) / "res.json"
             app = WebsiteDataGrabberApp(self.root, config_store=None)
             app.result_path = target
+            app.browser_process = Mock(poll=Mock(return_value=None))
+            app._live_result_baseline_mtime_ns = 0
             app.records = [{"job_id": "OUT-001", "status": "Pending"}]
             app.job_ids = ["OUT-001"]
 

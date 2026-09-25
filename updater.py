@@ -17,7 +17,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import requests
 
-USER_TEMPLATE_FILES = {"templates.xlsx", "variance_templates.xlsx"}
+USER_PRESERVE_FILES = {
+    "templates.xlsx",
+    "variance_templates.xlsx",
+    "sent_log.xlsx",
+    "reconciliation_queue.json",
+    ".load_reconciliation_tool_settings.json",
+    ".efl_records_cache.json",
+}
 
 # ----------------------------------------------------------------------
 # Parse command line arguments
@@ -271,8 +278,8 @@ class UpdaterApp:
                 continue
             src = os.path.join(source_dir, item)
             dst = os.path.join(self.app_dir, item)
-            if item.lower() in USER_TEMPLATE_FILES and os.path.exists(dst):
-                self.log.info(f"Keeping existing user template file '{dst}'.")
+            if item.lower() in USER_PRESERVE_FILES and os.path.exists(dst):
+                self.log.info(f"Keeping existing user file '{dst}'.")
                 continue
             if self_exe_name and item.lower() == self_exe_name.lower():
                 self._replace_self(src, dst)
@@ -319,11 +326,13 @@ class UpdaterApp:
 
     def restart_main_app(self):
         """Launch the main application."""
-        main_exe = os.path.join(self.app_dir, "EFL_Nexus.exe")
+        main_exe = os.path.join(self.app_dir, "EFL_NEXUS.exe")
+        if not os.path.exists(main_exe):
+            main_exe = os.path.join(self.app_dir, "EFL_Nexus.exe")
         if os.path.exists(main_exe):
             subprocess.Popen([main_exe], cwd=self.app_dir)
         else:
-            raise Exception("EFL_Nexus.exe not found after update.")
+            raise Exception("EFL_NEXUS.exe not found after update.")
 
 
 # ----------------------------------------------------------------------
