@@ -1155,7 +1155,36 @@ class SendVarianceDialog(tk.Toplevel):
         self.include_signature_var = tk.BooleanVar(value=True)
 
         self.create_widgets()
+        self._recipient_job_id = None
+        self._refresh_subject()
+        self._queue_trace = self.app.queued_job_id.trace_add("write", self._refresh_subject) if self.app else None
         self._size_and_center(parent)
+
+    def _refresh_subject(self, *_args):
+        self.subject_var.set(self.app.get_variance_subject() if self.app else "")
+        self._select_client_template()
+
+    def _select_client_template(self):
+        if not self.app:
+            return
+        client, job_id, _ = self.app.get_variance_job_details()
+        if job_id == self._recipient_job_id:
+            return
+        self._recipient_job_id = job_id
+        template = self.template_store.get_template(client) if self.template_store and client else None
+        if template:
+            self.template_var.set(template["name"])
+            self._on_template_selected()
+        else:
+            self.template_var.set("-- Select Client / Site Manager --")
+            self.to_entry.delete(0, tk.END)
+            self.cc_entry.delete(0, tk.END)
+
+    def destroy(self):
+        if self.app and getattr(self, "_queue_trace", None):
+            self.app.queued_job_id.trace_remove("write", self._queue_trace)
+            self._queue_trace = None
+        super().destroy()
 
     def _size_and_center(self, parent):
         self.update_idletasks()
@@ -1225,8 +1254,9 @@ class SendVarianceDialog(tk.Toplevel):
         subj_row = ttk.Frame(fields_frame)
         subj_row.pack(fill=tk.X, pady=3)
         ttk.Label(subj_row, text="Subject:", font=('Segoe UI', 9, 'bold'), width=12).pack(side=tk.LEFT)
-        self.subject_entry = ttk.Entry(subj_row)
-        self.subject_entry.insert(0, "Shipment Variance Report")
+        self.subject_var = tk.StringVar(value=self.app.get_variance_subject() if self.app else "")
+        self.subject_entry = ttk.Entry(subj_row, textvariable=self.subject_var)
+        self.subject_entry.configure(state="readonly")
         self.subject_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # --- Message Body ---
@@ -1330,9 +1360,7 @@ class SendVarianceDialog(tk.Toplevel):
 
     def _on_template_selected(self, event=None):
         name = self.template_var.get()
-        if not name or name == "-- Select Client / Site Manager --":
-            return
-        if not self.template_store:
+        if not name or name == "-- Select Client / Site Manager --" or not self.template_store:
             return
         tpl = self.template_store.get_template(name)
         if tpl:
@@ -1340,8 +1368,9 @@ class SendVarianceDialog(tk.Toplevel):
             self.to_entry.insert(0, tpl.get("to", ""))
             self.cc_entry.delete(0, tk.END)
             self.cc_entry.insert(0, tpl.get("cc", ""))
-            self.subject_entry.delete(0, tk.END)
-            self.subject_entry.insert(0, f"{name} - Shipment Variance Report")
+        else:
+            self.to_entry.delete(0, tk.END)
+            self.cc_entry.delete(0, tk.END)
 
     def _setup_tags(self):
         self.body_text.tag_configure("tbl_header", background="#1c3f60", foreground="#ffffff", font=("Consolas", 9, "bold"))
@@ -1655,7 +1684,8 @@ class SendVarianceDialog(tk.Toplevel):
 
         to_addr = (self.to_entry.get() or "").strip()
         cc_addr = (self.cc_entry.get() or "").strip()
-        subject = (self.subject_entry.get() or "").strip()
+        subject = self.app.get_variance_subject() if self.app else ""
+        self.subject_var.set(subject)
         body = self.body_text.get("1.0", "end-1c")
 
         if not to_addr:
@@ -1663,10 +1693,16 @@ class SendVarianceDialog(tk.Toplevel):
             return None
 
         if not subject:
-            if not messagebox.askyesno("Empty Subject", "The subject line is empty. Continue anyway?"):
-                return None
+            messagebox.showwarning(
+                "Missing Job Details",
+                "The client code, Job ID, and gatepass are required for the subject. "
+                "Check that the corresponding job in Pending Jobs has all three values.",
+            )
+            return None
 
         return to_addr, cc_addr, subject, body
+
+
 
     def _preview_email(self):
         data = self._gather_and_validate()
@@ -1851,6 +1887,8 @@ class ReconciliationApp:
         self.history_concat_configs = []
         self.plan_concat_configs = []
         self.last_output_file = None
+        self.last_report_job_id = None
+        self.active_job_context = None
         
         # Additional options
         self.auto_open_file = tk.BooleanVar(value=True)
@@ -2002,7 +2040,39 @@ class ReconciliationApp:
     
     def open_send_variance_dialog(self):
         """Open the Send Variance dialog to email site managers via Outlook."""
-        SendVarianceDialog(self.root, app=self, initial_attachment=self.last_output_file)
+        selected_job = self.queued_job_id.get().strip()
+        report_job = self.last_report_job_id or ""
+        attachment = self.last_output_file
+        if selected_job and selected_job.casefold() != report_job.casefold():
+            attachment = None
+        SendVarianceDialog(self.root, app=self, initial_attachment=attachment)
+
+    def get_variance_subject(self):
+        """Format the subject for the selected reconciliation job."""
+        client, job_id, gatepass = self.get_variance_job_details()
+        return f"{client} - {job_id} - {gatepass}" if client and job_id and gatepass else ""
+
+    def get_variance_job_details(self):
+        """Resolve the selected job against Pending Jobs metadata."""
+        active = self.active_job_context or {}
+        job_id = (
+            self.queued_job_id.get().strip()
+            or (self.last_report_job_id if self.last_output_file and self.last_report_job_id else "")
+            or str(active.get("job_id") or "").strip()
+        )
+        if not job_id:
+            return "", "", ""
+
+        client = gatepass = ""
+        if str(active.get("job_id") or "").strip().casefold() == job_id.casefold():
+            client = str(active.get("client") or "").strip()
+            gatepass = str(active.get("gatepass") or "").strip()
+        if not client or not gatepass:
+            from website_data_grabber import load_persisted_job_map
+            record = load_persisted_job_map().get(job_id.casefold(), {})
+            client = client or str(record.get("client") or "").strip()
+            gatepass = gatepass or str(record.get("gatepass") or "").strip()
+        return client, job_id, gatepass
     
     def _on_theme_toggle(self):
         self.apply_theme()
@@ -4099,6 +4169,7 @@ class ReconciliationApp:
             
             self.add_log(f"💾 Results saved to: {os.path.basename(output_file)}", "SUCCESS")
             self.last_output_file = output_file
+            self.last_report_job_id = selected_job_id
             
             self.update_progress(85, "🎨 Applying formatting...")
             formatting_succeeded = self.apply_excel_formatting(output_file)

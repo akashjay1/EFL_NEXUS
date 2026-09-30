@@ -390,6 +390,7 @@ class MainApp:
         self.tool5_hwnd = None
         self.tool5_watchdog_running = False
         self.tool6_app = None
+        self.active_reconciliation_job = None
         self.tool1_error = None
         self.tool2_error = None
         self.tool3_error = None
@@ -1400,6 +1401,7 @@ class MainApp:
             self.tool2_app = reconciliation_tool.ReconciliationApp(
                 self.root, container=page, standalone=False
             )
+            self.tool2_app.active_job_context = self.active_reconciliation_job
             self.tool2_app.on_embedded_exit = lambda: self.show_page("dashboard")
         except Exception:
             self.tool2_error = traceback.format_exc()
@@ -1534,6 +1536,23 @@ class MainApp:
           IN_*  → 'GRN Reconciliation:'
           Other → no-op (job still starts, no KPI prefill)
         """
+        record = next(
+            (record for record in getattr(getattr(self, "tool6_app", None), "records", [])
+             if str(record.get("job_id", "")).strip().casefold() == job_id.casefold()),
+            None,
+        )
+        self.active_reconciliation_job = {
+            "job_id": job_id,
+            "client": str((record or {}).get("client") or "").strip(),
+            "gatepass": str((record or {}).get("gatepass") or "").strip(),
+        }
+        if getattr(self, "tool2_app", None) is not None:
+            previous_report_job = getattr(self.tool2_app, "last_report_job_id", None)
+            if previous_report_job and previous_report_job.casefold() != job_id.casefold():
+                self.tool2_app.last_output_file = None
+                self.tool2_app.last_report_job_id = None
+            self.tool2_app.active_job_context = self.active_reconciliation_job
+
         upper = job_id.upper()
         if upper.startswith("OUT_"):
             section = "GDN Reconciliation:"
