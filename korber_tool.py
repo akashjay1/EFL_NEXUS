@@ -268,7 +268,7 @@ class KorberApp:
 
         ttk.Label(gdn_tab, text="Warehouse ID", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
         self.warehouse_entry = ttk.Combobox(
-            gdn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "LPIC", "INMM01"]
+            gdn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "LPIC", "LPSP", "INMM01"]
         )
         self.warehouse_entry.grid(row=0, column=1, sticky="ew", pady=(0, 12), padx=(10, 0))
 
@@ -310,7 +310,7 @@ class KorberApp:
 
         ttk.Label(grn_tab, text="Warehouse ID", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
         self.grn_warehouse_entry = ttk.Combobox(
-            grn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "INMM01"]
+            grn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "LPSP", "INMM01"]
         )
         self.grn_warehouse_entry.grid(row=0, column=1, sticky="ew", pady=(0, 12), padx=(10, 0))
 
