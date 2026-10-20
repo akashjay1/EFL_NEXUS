@@ -1,9 +1,12 @@
 __pycache__/
 *.pyc
+build/
+dist/
 .efl_records_cache.json
 
 # Runtime-generated folders — never commit these
 diagnostics/
+assets/grn_ocr/
 chrome_automation_profile_*/
 V3.zip
 EFL_v1.0.0.zip

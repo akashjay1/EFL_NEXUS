@@ -1,0 +1,3 @@
+# Install alongside requirements.txt when preparing Windows release bundles.
+pefile>=2023.2.7
+zstandard==0.25.0

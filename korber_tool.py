@@ -30,6 +30,7 @@ from selenium.common.exceptions import (
 )
 
 import korber_login_bot as bot  # reuses open_new_browser() and login() from the file we already built
+from whatsapp_grn import GRN_WAREHOUSES
 
 # How many extra attempts a single step gets before it's treated as a real
 # failure, and how long to pause between attempts. Bump STEP_RETRIES up (or
@@ -305,12 +306,18 @@ class KorberApp:
         )
         self.gdn_queue_btn.grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
+        self.whatsapp_inbox_btn = ttk.Button(
+            gdn_tab, text="WhatsApp GDN Inbox", style="Secondary.TButton",
+            command=self.open_whatsapp_inbox,
+        )
+        self.whatsapp_inbox_btn.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
         # --- GRN tab (separate fields, not shared with GDN) ---
         grn_tab.columnconfigure(1, weight=1)
 
         ttk.Label(grn_tab, text="Warehouse ID", style="Card.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 12))
         self.grn_warehouse_entry = ttk.Combobox(
-            grn_tab, state="readonly", values=["EGDC", "ESKD", "NUGE", "LPPL", "LPSP", "INMM01"]
+            grn_tab, state="readonly", values=GRN_WAREHOUSES
         )
         self.grn_warehouse_entry.grid(row=0, column=1, sticky="ew", pady=(0, 12), padx=(10, 0))
 
@@ -420,6 +427,15 @@ class KorberApp:
         # Restart App / Terminate Session now live in the "⋮ More Options"
         # menu at the top right of the header instead of a standalone
         # button here.
+
+        if not hasattr(root, "_whatsapp_gdn_lanes"):
+            root._whatsapp_gdn_lanes = {}
+        lane_label = {"lane_a": "Lane A", "lane_b": "Lane B"}.get(profile_name, profile_name.replace("_", " ").title())
+        root._whatsapp_gdn_lanes[lane_label] = self
+
+    def open_whatsapp_inbox(self):
+        from whatsapp_inbox import open_inbox
+        return open_inbox(self.root, self.root._whatsapp_gdn_lanes)
 
     def _start_progress(self):
         self.progress.start(12)

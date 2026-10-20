@@ -75,6 +75,7 @@ NAV_ITEMS = [
     ("tool4", "👥", "User KPI"),
     ("tool5", "🚚", "Korber AuditShip"),
     ("tool6", "🔗", "Pending Jobs"),
+    ("whatsapp", "WA", "WhatsApp"),
     ("settings", "⚙", "Settings"),
 ]
 
@@ -390,6 +391,10 @@ class MainApp:
         self.tool5_hwnd = None
         self.tool5_watchdog_running = False
         self.tool6_app = None
+        self.whatsapp_controller = None
+        self.whatsapp_page = None
+        self.whatsapp_error = None
+        self.root._open_whatsapp_page = self._open_whatsapp_inbox
         self.active_reconciliation_job = None
         self.tool1_error = None
         self.tool2_error = None
@@ -415,6 +420,7 @@ class MainApp:
         self._build_pages()
 
         self.show_page("dashboard")
+        self.root.after(250, self._start_whatsapp_controller)
 
         # Start non-blocking network monitor loop
         threading.Thread(target=self._network_monitor_worker, daemon=True).start()
@@ -829,6 +835,9 @@ class MainApp:
 
         self._refresh_nav_highlight()
 
+        if self.whatsapp_controller is not None:
+            self._refresh_whatsapp_badge(self.whatsapp_controller)
+
     def _make_nav_button(self, key, icon, label):
         row = tk.Frame(self.sidebar, bg=SIDEBAR_BG, cursor="hand2")
         row.pack(fill="x", padx=8, pady=3)
@@ -913,6 +922,8 @@ class MainApp:
     def show_page(self, key):
         self.active_page = key
         self._refresh_nav_highlight()
+        if self.whatsapp_page is not None:
+            self.whatsapp_page.set_visible(key == "whatsapp")
 
         # A foreign child HWND needs an explicit hide when another stacked Tk
         # page is selected; Tk's tkraise alone cannot manage its visibility.
@@ -929,6 +940,7 @@ class MainApp:
             "tool4": self.tool4_app is not None or self.tool4_error is not None,
             "tool5": self.tool5_ready or self.tool5_error is not None,
             "tool6": self.tool6_app is not None or self.tool6_error is not None,
+            "whatsapp": self.whatsapp_page is not None or self.whatsapp_error is not None,
         }
 
         if key in _tool_loaded and not _tool_loaded[key]:
@@ -967,6 +979,8 @@ class MainApp:
             return  # tool5 manages its own overlay
         elif key == "tool6":
             self._ensure_tool6()
+        elif key == "whatsapp":
+            self._ensure_whatsapp()
         self._hide_loading_overlay()
 
     # ------------------------------------------------------------------
@@ -979,6 +993,7 @@ class MainApp:
         "tool4": "User KPI",
         "tool5": "Korber AuditShip",
         "tool6": "Pending Jobs",
+        "whatsapp": "WhatsApp",
     }
 
     def _show_loading_overlay(self, key):
@@ -1345,6 +1360,51 @@ class MainApp:
     # ------------------------------------------------------------------
     # Tool 1 / Tool 2 / Tool 3 Lazy Loading
     # ------------------------------------------------------------------
+    def _start_whatsapp_controller(self):
+        if self.whatsapp_controller is not None:
+            return
+        try:
+            from whatsapp_controller import WhatsAppController
+            self.whatsapp_controller = WhatsAppController(self.root, on_change=self._refresh_whatsapp_badge)
+            self.root._whatsapp_controller = self.whatsapp_controller
+            self._refresh_whatsapp_badge(self.whatsapp_controller)
+        except Exception:
+            self.whatsapp_error = traceback.format_exc()
+
+    def _refresh_whatsapp_badge(self, controller):
+        widgets = self.nav_buttons.get("whatsapp")
+        if widgets:
+            count = controller.new_count + getattr(controller, "grn_new_count", 0)
+            text = f"WA {count}" if self.sidebar_collapsed else f"WhatsApp ({count})\n{controller.state}"
+            widgets["label"].configure(text=text)
+
+    def _whatsapp_lanes(self):
+        self._ensure_tool1()
+        return getattr(self.root, "_whatsapp_gdn_lanes", {})
+
+    def _ensure_whatsapp(self):
+        if self.whatsapp_page is not None:
+            return
+        self._start_whatsapp_controller()
+        if self.whatsapp_controller is None:
+            self._show_tool_error(self.pages["whatsapp"], "WhatsApp", self.whatsapp_error or "Could not open inbox storage.")
+            return
+        try:
+            from whatsapp_page import WhatsAppPage
+            self.whatsapp_page = WhatsAppPage(self.root, self.pages["whatsapp"], self.whatsapp_controller,
+                                              getattr(self.root, "_whatsapp_gdn_lanes", {}), self._whatsapp_lanes)
+            self.whatsapp_page.set_visible(self.active_page == "whatsapp")
+        except Exception:
+            self.whatsapp_error = traceback.format_exc()
+            self._show_tool_error(self.pages["whatsapp"], "WhatsApp", self.whatsapp_error)
+
+    def _open_whatsapp_inbox(self):
+        self._ensure_whatsapp()
+        self.show_page("whatsapp")
+        if self.whatsapp_page is not None:
+            self.whatsapp_page.show_inbox()
+        return self.whatsapp_page
+
     def _ensure_tool1(self):
         page = self.pages["tool1"]
         if self.tool1_ready or self.tool1_error is not None:
@@ -1541,7 +1601,7 @@ class MainApp:
              if str(record.get("job_id", "")).strip().casefold() == job_id.casefold()),
             None,
         )
-        self.active_reconciliation_job = {
+        self.active_reconciliation_job = {      
             "job_id": job_id,
             "client": str((record or {}).get("client") or "").strip(),
             "gatepass": str((record or {}).get("gatepass") or "").strip(),
@@ -3099,7 +3159,12 @@ class MainApp:
 
     # ------------------------------------------------------------------
     def on_close(self):
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
         self._stop_network_monitor.set()
+        if self.whatsapp_controller is not None:
+            self.whatsapp_controller.shutdown()
         if self.tool2_app is not None:
             try:
                 self.tool2_app.save_settings()
@@ -3131,7 +3196,11 @@ class MainApp:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 3 and sys.argv[1] == "--internal-browser":
+    if len(sys.argv) == 5 and sys.argv[1] == "--whatsapp-browser":
+        from whatsapp_monitor import run_whatsapp_browser
+        run_whatsapp_browser(Path(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+        raise SystemExit(0)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--internal-browser":
         from website_data_grabber import run_internal_browser, DEFAULT_LOGIN_URL
         run_internal_browser(Path(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else DEFAULT_LOGIN_URL)
         raise SystemExit(0)

@@ -1330,7 +1330,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 }}, 5000);
               }};
 
-              const fetchAndSaveFile = async (url, suggestedName, statusEl = null, returnAfterSuccess = false) => {{
+              const fetchAndSaveFile = async (url, suggestedName, statusEl = null, returnAfterSuccess = false, excelOnly = false) => {{
                 if (!window.pywebview || !window.pywebview.api || typeof window.pywebview.api.save_downloaded_file !== 'function') {{
                   showDownloadToast('Connection initializing... please click again in a moment.', true);
                   return false;
@@ -1344,6 +1344,14 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 try {{
                   const response = await fetch(url, {{ credentials: 'include' }});
                   if (!response.ok) throw new Error('HTTP ' + response.status + ': ' + response.statusText);
+                  if (excelOnly) {{
+                    const mime = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+                    const excelMime = /^(application\/(vnd\.ms-excel(?:\.[a-z0-9.-]+)?|vnd\.openxmlformats-officedocument\.spreadsheetml\.(sheet|template)))$/i;
+                    if (mime && mime !== 'application/octet-stream' && !excelMime.test(mime)) {{
+                      if (response.body) await response.body.cancel();
+                      throw new Error('Skipped non-Excel response: ' + mime);
+                    }}
+                  }}
                   const blob = await response.blob();
                   return new Promise((resolve) => {{
                     const reader = new FileReader();
@@ -1492,23 +1500,24 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               }};
               setInterval(enhanceEvidenceCards, 1000);
 
+              const getExcelDownloadName = (href, downloadName, label) => {{
+                const excelExtension = /\.(xlsx|xls|xlsm|xlsb|xltx|xltm|xlt)$/i;
+                let urlName;
+                try {{ urlName = decodeURIComponent(new URL(href).pathname.split('/').pop()); }}
+                catch (e) {{ return ''; }}
+                // A concrete non-Excel URL suffix takes precedence over link labels.
+                if (/\.[a-z0-9]+$/i.test(urlName) && !excelExtension.test(urlName)) return '';
+                return [urlName, downloadName, label].find(candidate => excelExtension.test(candidate)) || '';
+              }};
+
               const getAllJobDownloadItems = () => {{
                 const items = [];
                 const links = document.querySelectorAll("a.btn-download, a[download], table a[href*='/storage/'], table a[href*='uploads']");
                 links.forEach(l => {{
                   const href = l.href || l.getAttribute('href');
                   if (href && !items.some(it => it.url === href)) {{
-                    const name = l.getAttribute('download') || l.textContent.trim() || href.split('/').pop().split('?')[0];
-                    items.push({{ url: href, filename: name }});
-                  }}
-                }});
-                const cards = document.querySelectorAll('.evidence-card[data-img]');
-                cards.forEach((c, idx) => {{
-                  const imgUrl = c.getAttribute('data-img');
-                  if (imgUrl && !items.some(it => it.url === imgUrl)) {{
-                    const stack = c.getAttribute('data-stack') || String(idx + 1);
-                    const name = `Job_${{getCurrentJobId() || 'job'}}_Stack_${{stack}}_${{imgUrl.split('/').pop().split('?')[0]}}`;
-                    items.push({{ url: imgUrl, filename: name }});
+                    const name = getExcelDownloadName(href, l.getAttribute('download') || '', l.textContent.trim());
+                    if (name) items.push({{ url: href, filename: name }});
                   }}
                 }});
                 return items;
@@ -1517,7 +1526,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               const downloadAllJobFiles = async (returnAfterSuccess = false) => {{
                 const items = getAllJobDownloadItems();
                 if (!items.length) {{
-                  showDownloadToast('No downloadable files or evidence images found on this page.', true);
+                  showDownloadToast('No Excel sheets found on this page.', true);
                   return;
                 }}
                 showDownloadToast('Starting download of ' + items.length + ' file(s)...');
@@ -1530,7 +1539,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 let lastFolder = '';
                 for (let i = 0; i < items.length; i++) {{
                   if (allBtn) allBtn.textContent = '⏳ Downloading (' + (i + 1) + '/' + items.length + ')...';
-                  const res = await fetchAndSaveFile(items[i].url, items[i].filename);
+                  const res = await fetchAndSaveFile(items[i].url, items[i].filename, null, false, true);
                   if (res) {{
                     successCount++;
                     if (res.folder) lastFolder = res.folder;
@@ -1540,7 +1549,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   allBtn.disabled = false;
                   allBtn.textContent = '✓ Downloaded ' + successCount + '/' + items.length + ' Files';
                   setTimeout(() => {{
-                    allBtn.textContent = '📥 Download All Files';
+                    allBtn.textContent = '📥 Download All Excel Sheets';
                   }}, 4000);
                 }}
                 const destMsg = lastFolder ? 'folder ' + lastFolder : 'Downloads folder';
@@ -1548,7 +1557,26 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                 if (returnAfterSuccess && successCount > 0) scheduleReturnToReconciliation();
               }};
 
+              // Keep job download actions in normal flex flow so longer labels
+              // and progress messages cannot overlap the neighbouring button.
+              const getJobDownloadToolbar = () => {{
+                let toolbar = document.getElementById('efl-nexus-job-download-toolbar');
+                if (!toolbar && document.body) {{
+                  toolbar = document.createElement('div');
+                  toolbar.id = 'efl-nexus-job-download-toolbar';
+                  Object.assign(toolbar.style, {{
+                    position: 'fixed', left: '105px', bottom: '8px', zIndex: 2147483647,
+                    display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px',
+                    maxWidth: 'calc(100vw - 121px)',
+                  }});
+                  document.body.appendChild(toolbar);
+                }}
+                if (toolbar) toolbar.style.display = isJobDetailsPage() ? 'flex' : 'none';
+                return toolbar;
+              }};
+
               const attachDownloadAllButton = () => {{
+                const toolbar = getJobDownloadToolbar();
                 if (!isJobDetailsPage()) {{
                   const btn = document.getElementById('efl-nexus-download-all');
                   if (btn) btn.style.display = 'none';
@@ -1559,12 +1587,11 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   btn = document.createElement('button');
                   btn.id = 'efl-nexus-download-all';
                   btn.type = 'button';
-                  btn.textContent = '📥 Download All Files';
+                  btn.textContent = '📥 Download All Excel Sheets';
                   Object.assign(btn.style, {{
-                    position: 'fixed',
-                    left: '105px',
-                    bottom: '8px',
-                    zIndex: 2147483647,
+                    flex: '0 0 auto',
+                    maxWidth: '100%',
+                    whiteSpace: 'normal',
                     border: '0',
                     borderRadius: '5px',
                     padding: '6px 12px',
@@ -1580,7 +1607,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   btn.onmouseenter = () => {{ btn.style.opacity = '1'; }};
                   btn.onmouseleave = () => {{ btn.style.opacity = '0.9'; }};
                   btn.addEventListener('click', () => downloadAllJobFiles(true));
-                  if (document.body) document.body.appendChild(btn);
+                  if (toolbar) toolbar.appendChild(btn);
                 }} else {{
                   btn.style.display = 'block';
                 }}
@@ -1589,6 +1616,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
               setInterval(attachDownloadAllButton, 1000);
 
               const attachLoadingHistoryButton = () => {{
+                const toolbar = getJobDownloadToolbar();
                 let btn = document.getElementById('efl-nexus-loading-history');
                 if (!isJobDetailsPage()) {{
                   if (btn) btn.style.display = 'none';
@@ -1600,7 +1628,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                   btn.type = 'button';
                   btn.textContent = 'Download Loading History';
                   Object.assign(btn.style, {{
-                    position: 'fixed', left: '260px', bottom: '8px', zIndex: 2147483647,
+                    flex: '0 0 auto', maxWidth: '100%', whiteSpace: 'normal',
                     border: '0', borderRadius: '5px', padding: '6px 12px', cursor: 'pointer',
                     background: '#2563eb', color: '#ffffff', fontWeight: '700', fontSize: '11px',
                     boxShadow: '0 2px 8px rgba(0,0,0,0.3)', opacity: '0.9',
@@ -1628,7 +1656,7 @@ def run_internal_browser(result_path: Path, start_url: str = DEFAULT_LOGIN_URL) 
                       btn.disabled = false;
                     }}
                   }});
-                  if (document.body) document.body.appendChild(btn);
+                  if (toolbar) toolbar.appendChild(btn);
                 }} else {{
                   btn.style.display = 'block';
                 }}
@@ -3473,7 +3501,7 @@ class WebsiteDataGrabberApp:
 
         self.download_files_btn = tk.Button(
             action_bar,
-            text="📥 Download Files",
+            text="📥 Download Excel Sheets",
             command=self.download_selected_job_files,
             bg="#0284c7",
             fg="#ffffff",
@@ -4597,7 +4625,7 @@ class WebsiteDataGrabberApp:
             messagebox.showinfo("Create Gatepass", f"Job: {job_id}\nData: {record_to_send}")
 
     def download_selected_job_files(self):
-        """Request the browser to download all files for the selected job."""
+        """Request only Excel sheets for the selected job."""
         selected = self.tree.selection()
         if not selected:
             messagebox.showinfo("Select Job", "Please select a job from the list first.")
