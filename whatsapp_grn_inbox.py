@@ -14,6 +14,7 @@ class WhatsAppGRNInbox:
         self.root, self.controller, self.lanes, self.ensure_lanes = root, controller, lanes, ensure_lanes
         self.store = GRNInboxStore(controller.store.path)
         self.selected_id = None
+        self.selected_source_id = None
         self.closed = False
         self.after_id = None
         self.selected_revision = None
@@ -100,25 +101,66 @@ class WhatsAppGRNInbox:
             self.capture_status.set("\n".join([notice] + [f"{e['source']}: {e['capture_error']}" for e in errors[:3]]).strip())
         except (sqlite3.Error, OSError) as exc:
             self.status.set(f"Could not refresh GRN inbox: {exc}")
-        self.after_id = self.frame.after(750, self._poll)
+        self.after_id = self.frame.after(250, self._poll)
 
     def refresh(self):
-        selected = self.selected_id
-        self.tree.delete(*self.tree.get_children())
+        # Render detections before media retrieval/OCR, and update rows in place
+        # so heartbeat writes do not reset scrolling or the user's selection.
+        if self.selected_source_id is not None:
+            source = self.store.db.execute("SELECT document_id FROM grn_sources WHERE id=?", (self.selected_source_id,)).fetchone()
+            if source and source[0]:
+                self.selected_id, self.selected_source_id = source[0], None
+                self.load_selected()
+        rows = []
+        for source in self.store.pending_entries():
+            state = "Waiting for original photo" if source["incoming_verified"] else "Sender verification required"
+            if source["capture_error"]:
+                state = "Waiting / retrying photo"
+            rows.append((f"source:{source['id']}", ("Incoming photo", state)))
         for record in self.store.documents():
             state = record["action"] if record["action"] != "New" else record["state"]
-            self.tree.insert("", "end", iid=str(record["id"]), values=(record["gatepass"] or "Unread", state))
+            rows.append((str(record["id"]), (record["gatepass"] or "Unread", state)))
+        wanted = {key for key, _ in rows}
+        for key in self.tree.get_children():
+            if key not in wanted:
+                self.tree.delete(key)
+        for index, (key, values) in enumerate(rows):
+            if not self.tree.exists(key):
+                self.tree.insert("", index, iid=key, values=values)
+            else:
+                if tuple(self.tree.item(key, "values")) != values:
+                    self.tree.item(key, values=values)
+                self.tree.move(key, "", index)
+        selected = self.selected_id
         if selected is not None and self.tree.exists(str(selected)):
             self.tree.selection_set(str(selected))
             current = self.store.document(selected)
-            revision = (current["state"], current["extraction"])
+            revision = (current["state"], current["image_path"], current["extraction"])
             if revision != self.selected_revision and not self.dirty:
                 self.load_selected()
 
     def _selected(self, _=None):
         selection = self.tree.selection()
-        if selection and int(selection[0]) != self.selected_id:
+        if not selection:
+            return
+        if selection[0].startswith("source:"):
+            self.selected_source_id = int(selection[0].split(":")[1])
+            self.selected_id = None
+            source = self.store.db.execute("SELECT * FROM grn_sources WHERE id=?", (self.selected_source_id,)).fetchone()
+            self.loading = True
+            self.warehouse.set(source["warehouse"] if source else "")
+            self.gatepass.set("")
+            self.loading = False
+            self.dirty = False
+            self.confirmed.set(False)
+            for label in (self.original, self.crop):
+                label.configure(image="", text="Waiting for the original photo")
+                label.image = None
+            self.warnings.set(source["capture_error"] or ("Waiting for WhatsApp to load the original photo." if source["incoming_verified"] else "Sender is not verified as incoming. Keep the message and adjacent incoming messages visible."))
+            self.status.set("Photo detected and saved in the inbox. Download and extraction are pending.")
+        elif int(selection[0]) != self.selected_id:
             self.selected_id = int(selection[0])
+            self.selected_source_id = None
             self.load_selected()
 
     def show_image(self, label, path, size):
@@ -143,7 +185,7 @@ class WhatsAppGRNInbox:
         self.loading = False
         self.confirmed.set(False)
         self.dirty = False
-        self.selected_revision = (record["state"], record["extraction"])
+        self.selected_revision = (record["state"], record["image_path"], record["extraction"])
         self.show_image(self.original, record["image_path"], (470, min(530, max(220, self.root.winfo_height() - 440))))
         self.show_image(self.crop, record["extraction"].get("header_path", ""), (380, 165))
         warnings = list(record["extraction"].get("warnings", []))
@@ -244,9 +286,40 @@ class WhatsAppGRNInbox:
         record = self.store.document(self.selected_id)
         window = tk.Toplevel(self.root)
         window.title("GRN original photo")
-        label = ttk.Label(window)
-        label.pack(fill="both", expand=True)
-        self.show_image(label, record["image_path"], (min(1100, self.root.winfo_screenwidth() - 100), self.root.winfo_screenheight() - 120))
+        try:
+            with Image.open(record["image_path"]) as source:
+                picture = ImageOps.exif_transpose(source).convert("RGB")
+        except (OSError, ValueError):
+            ttk.Label(window, text="Original photo is not available yet.").pack(padx=30, pady=30)
+            return
+        width = min(1100, self.root.winfo_screenwidth() - 100)
+        height = min(850, self.root.winfo_screenheight() - 120)
+        window.geometry(f"{width}x{height}")
+        controls = ttk.Frame(window)
+        controls.pack(fill="x")
+        ttk.Label(controls, text=f"Captured image: {picture.width} × {picture.height} pixels").pack(side="left", padx=8)
+        area = ttk.Frame(window)
+        area.pack(fill="both", expand=True)
+        canvas = tk.Canvas(area, highlightthickness=0, background="#333333")
+        xscroll = ttk.Scrollbar(area, orient="horizontal", command=canvas.xview)
+        yscroll = ttk.Scrollbar(area, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+        xscroll.pack(side="bottom", fill="x")
+        yscroll.pack(side="right", fill="y")
+        canvas.pack(fill="both", expand=True)
+
+        def draw(scale):
+            size = (max(1, round(picture.width * scale)), max(1, round(picture.height * scale)))
+            canvas.image = ImageTk.PhotoImage(picture if size == picture.size else picture.resize(size, Image.Resampling.LANCZOS))
+            canvas.delete("all")
+            canvas.create_image(0, 0, anchor="nw", image=canvas.image)
+            canvas.configure(scrollregion=(0, 0, *size))
+
+        fit = min(1, (width - 25) / picture.width, (height - 60) / picture.height)
+        ttk.Button(controls, text="Fit", command=lambda: draw(fit)).pack(side="right", padx=4, pady=4)
+        ttk.Button(controls, text="100%", command=lambda: draw(1)).pack(side="right", padx=4)
+        ttk.Button(controls, text="200%", command=lambda: draw(2)).pack(side="right", padx=4)
+        draw(fit)
 
     def _destroyed(self, event):
         if event.widget is self.frame and not self.closed:

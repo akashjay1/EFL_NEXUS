@@ -90,6 +90,11 @@ class GRNInboxStore(GDNInboxStore):
         if "capture_refresh" not in columns:
             with self.db:
                 self.db.execute("ALTER TABLE grn_sources ADD COLUMN capture_refresh INTEGER NOT NULL DEFAULT 0")
+        with self.db:
+            if "incoming_verified" not in columns:
+                self.db.execute("ALTER TABLE grn_sources ADD COLUMN incoming_verified INTEGER NOT NULL DEFAULT 1")
+            if "capture_attempts" not in columns:
+                self.db.execute("ALTER TABLE grn_sources ADD COLUMN capture_attempts INTEGER NOT NULL DEFAULT 0")
 
     def default_warehouse(self, group_id):
         return self.setting("grn_warehouses", {}).get(group_id, "")
@@ -109,24 +114,56 @@ class GRNInboxStore(GDNInboxStore):
         group = snapshot["group_id"]
         warehouse = self.default_warehouse(group)
         with self.db:
-            for photo in snapshot.get("photos", []):
+            # Keep uncertain senders visible, without treating their media as
+            # incoming or allowing it through to OCR/form filling.
+            candidates = [(p, 1) for p in snapshot.get("photos", [])]
+            candidates += [(p, 0) for p in snapshot.get("unclassifiedPhotos", [])]
+            for photo, verified in candidates:
                 args = (group, photo["message_id"], photo["index"])
                 self.db.execute("""INSERT INTO grn_sources
-                    (group_id,message_id,photo_index,source,warehouse,skipped) VALUES (?,?,?,?,?,?)
-                    ON CONFLICT(group_id,message_id,photo_index) DO NOTHING""",
-                    (*args, snapshot["name"], warehouse, int(baseline)))
+                    (group_id,message_id,photo_index,source,warehouse,skipped,incoming_verified) VALUES (?,?,?,?,?,?,?)
+                    ON CONFLICT(group_id,message_id,photo_index) DO UPDATE SET
+                    incoming_verified=excluded.incoming_verified
+                    WHERE excluded.incoming_verified>grn_sources.incoming_verified""",
+                    (*args, snapshot["name"], warehouse, int(baseline), verified))
                 if import_visible:
                     self.db.execute("""UPDATE grn_sources SET skipped=0,next_try=0,warehouse=?
                         WHERE group_id=? AND message_id=? AND photo_index=? AND document_id IS NULL""", (warehouse, *args))
 
-    def pending_capture(self, group_id):
-        return [dict(r) for r in self.db.execute("""SELECT * FROM grn_sources WHERE group_id=?
-            AND skipped=0 AND (document_id IS NULL OR capture_refresh=1) AND next_try<=? ORDER BY id LIMIT 1""", (group_id, time.time()))]
+    def pending_capture(self, group_id, limit=1, exclude_ids=(), visible_ids=None):
+        query = """SELECT * FROM grn_sources WHERE group_id=? AND incoming_verified=1
+            AND skipped=0 AND (document_id IS NULL OR capture_refresh=1) AND next_try<=?"""
+        args = [group_id, time.time()]
+        for column, values, operator in (("id", exclude_ids, "NOT IN"),
+                                          ("message_id", visible_ids, "IN")):
+            if values is not None:
+                values = tuple(values)
+                if not values:
+                    if operator == "IN":
+                        return []
+                    continue
+                query += f" AND {column} {operator} ({','.join('?' for _ in values)})"
+                args.extend(values)
+        query += " ORDER BY next_try,id LIMIT ?"
+        return [dict(r) for r in self.db.execute(query, (*args, int(limit)))]
+
+    def pending_entries(self):
+        """List durable detections immediately, before download or OCR completes."""
+        return [dict(r) for r in self.db.execute("""SELECT * FROM grn_sources
+            WHERE skipped=0 AND document_id IS NULL ORDER BY id DESC""")]
 
     def capture_failed(self, source_id, error):
+        row = self.db.execute("SELECT capture_attempts FROM grn_sources WHERE id=?", (source_id,)).fetchone()
+        attempts = row[0] if row else 0
+        delay = (1, 2, 5, 15, 30)[min(attempts, 4)]
+        with self.db:
+            self.db.execute("UPDATE grn_sources SET capture_error=?,next_try=?,capture_attempts=capture_attempts+1 WHERE id=?",
+                            (str(error)[:500], time.time() + delay, source_id))
+
+    def capture_waiting(self, source_id, detail):
         with self.db:
             self.db.execute("UPDATE grn_sources SET capture_error=?,next_try=? WHERE id=?",
-                            (str(error)[:500], time.time() + 30, source_id))
+                            (str(detail)[:500], time.time() + .25, source_id))
 
     def save_image(self, source_id, encoded):
         if len(encoded) > MAX_IMAGE_BYTES * 4 // 3 + 4:
@@ -172,7 +209,7 @@ class GRNInboxStore(GDNInboxStore):
                 VALUES (?,?,?,?) ON CONFLICT(image_hash) DO NOTHING""",
                 (digest, str(destination), datetime.now(timezone.utc).isoformat(), source["warehouse"]))
             record_id = self.db.execute("SELECT id FROM grn_documents WHERE image_hash=?", (digest,)).fetchone()[0]
-            self.db.execute("UPDATE grn_sources SET document_id=?,capture_error='',capture_refresh=0 WHERE id=?", (record_id, source_id))
+            self.db.execute("UPDATE grn_sources SET document_id=?,capture_error='',capture_refresh=0,capture_attempts=0,next_try=0 WHERE id=?", (record_id, source_id))
         return record_id
 
     def documents(self):
@@ -200,7 +237,7 @@ class GRNInboxStore(GDNInboxStore):
         with self.db:
             if record_id is not None:
                 self.db.execute("UPDATE grn_documents SET state='Pending' WHERE id=? AND action NOT LIKE 'Filled:%'", (record_id,))
-            self.db.execute("UPDATE grn_sources SET next_try=0 WHERE skipped=0 AND (document_id IS NULL OR capture_refresh=1)")
+            self.db.execute("UPDATE grn_sources SET next_try=0,capture_attempts=0 WHERE skipped=0 AND (document_id IS NULL OR capture_refresh=1)")
 
     def refresh_photo(self, record_id):
         record = self.document(record_id)
@@ -259,41 +296,76 @@ class GRNExtractionWorker:
 
 
 def photo_read_script(group_id, message_id, index):
-    """Read only an observed message's locally rendered image; never fetch a private endpoint."""
+    """Load this message's full viewer image; never copy the chat thumbnail."""
     return r"""(async () => {
-        if (location.origin !== 'https://web.whatsapp.com') return {error:'WhatsApp is not open.'};
-        const title = document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]');
-        if (!title || 'name:'+title.textContent.trim() !== %s) return {error:'Return to the selected group.'};
-        const name=title.textContent.trim(), side=document.querySelector('#pane-side');
-        const matches=side ? [...side.querySelectorAll('span[title]')].filter(e=>e.getAttribute('title')===name) : [];
-        const selected=side ? [...side.querySelectorAll('[aria-selected="true"]')] : [];
-        if(matches.length!==1 || selected.length!==1 || !selected[0].contains(matches[0]))
-            return {error:'Selected group cannot be verified. Return to the saved group and retry.'};
-        const row = [...document.querySelectorAll('#main [data-id][data-testid^="conv-msg-"]')]
-            .find(r=>r.getAttribute('data-id') === %s);
-        if (!row) return {error:'Photo is no longer visible. Open its message, then retry capture.'};
-        const thumbs = [...row.querySelectorAll('[data-testid="image-thumb"]')]
-            .filter(e=>!e.closest('[data-testid="quoted-message"]'));
-        const thumb=thumbs[%d];
-        // Allow lazy-loaded media to settle before selecting the image. Capture
-        // remains asynchronous so this does not block text monitoring.
-        await new Promise(resolve=>setTimeout(resolve,3000));
-        const img=thumb && [...thumb.querySelectorAll('[data-testid="media-url-provider"] img')]
-            .sort((a,b)=>b.naturalWidth*b.naturalHeight-a.naturalWidth*a.naturalHeight)[0];
-        if (!img || !img.complete || img.naturalWidth < 300 || img.naturalHeight < 300)
-            return {error:'Full photo is not loaded. Open the photo in WhatsApp, close it, then retry capture.'};
-        const src=img.currentSrc || img.src;
-        if (!src.startsWith('blob:https://web.whatsapp.com/')) return {error:'Full photo is not available as local media yet. Open it and retry.'};
-        const abort=new AbortController(), timer=setTimeout(()=>abort.abort(),10000);
+        const groupId=%s, messageId=%s, photoIndex=%d;
+        const waiting=error=>({error,waiting:true});
+        const title=()=>document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]');
+        const validGroup=()=>{
+            const header=title(),side=document.querySelector('#pane-side');
+            if(!header || 'name:'+header.textContent.trim()!==groupId || !side) return false;
+            const matches=[...side.querySelectorAll('span[title]')].filter(e=>e.getAttribute('title')===header.textContent.trim());
+            const selected=[...side.querySelectorAll('[aria-selected="true"]')];
+            return matches.length===1 && selected.length===1 && selected[0].contains(matches[0]);
+        };
+        if(location.origin!=='https://web.whatsapp.com' || !validGroup())
+            return {error:'Return to the selected group to load the original photo.'};
+        const row=[...document.querySelectorAll('#main [data-id][data-testid^="conv-msg-"]')]
+            .find(e=>e.getAttribute('data-id')===messageId);
+        const thumb=row && [...row.querySelectorAll('[data-testid="image-thumb"]')]
+            .filter(e=>!e.closest('[data-testid="quoted-message"]'))[photoIndex];
+        let owner=window.__nexusGrnOriginal;
+        if(!thumb && !owner) return {error:'Photo message is outside the rendered history. Open its message to complete capture.'};
+        let modal=document.querySelector('[data-testid="media-viewer-modal"]');
+        const finish=close=>{
+            if(!owner || window.__nexusGrnOriginal!==owner) return;
+            owner.events.abort();
+            if(close && !owner.interrupted && owner.modal?.isConnected && validGroup()) {
+                const buttons=[...owner.modal.querySelectorAll('button,[role="button"]')]
+                    .filter(e=>e.getAttribute('aria-label')==='Close');
+                if(buttons.length===1) buttons[0].click();
+            }
+            delete window.__nexusGrnOriginal;
+        };
+        if(owner && owner.interrupted){finish(false);return waiting('Photo loading paused while you use the WhatsApp viewer. Close it to continue.');}
+        if(owner && Date.now()-owner.started>12000){finish(true);return {error:'Original photo did not finish loading. Capture will retry.'};}
+        if(owner && (owner.messageId!==messageId || owner.photoIndex!==photoIndex || owner.groupId!==groupId))
+            return waiting('Waiting for another original photo to finish loading.');
+        if(!owner){
+            if(modal) return waiting('Close WhatsApp?s photo viewer to let automatic original-photo capture continue.');
+            owner={groupId,messageId,photoIndex,started:Date.now(),events:new AbortController(),modal:null,interrupted:false};
+            window.__nexusGrnOriginal=owner;
+            const interrupt=e=>{if(e.isTrusted && document.querySelector('[data-testid="media-viewer-modal"]')?.contains(e.target)) owner.interrupted=true;};
+            document.addEventListener('pointerdown',interrupt,{capture:true,signal:owner.events.signal});
+            document.addEventListener('keydown',interrupt,{capture:true,signal:owner.events.signal});
+            thumb.click();
+            modal=document.querySelector('[data-testid="media-viewer-modal"]');
+            owner.modal=modal;
+            return waiting('Loading the original photo from WhatsApp.');
+        }
+        if(!modal){finish(false);return waiting('Opening original photo. Capture will retry.');}
+        if(owner.modal && owner.modal!==modal){finish(false);return waiting('WhatsApp?s photo viewer changed. Close it to continue capture.');}
+        owner.modal=modal;
+        const full=[...modal.querySelectorAll('[data-testid="media-image"] img')].filter(img=>{
+            if(!img.complete || img.naturalWidth<300 || img.naturalHeight<300 || !(img.currentSrc||img.src).startsWith('blob:https://web.whatsapp.com/')) return false;
+            for(let e=img;e && e!==modal;e=e.parentElement){
+                const s=getComputedStyle(e);
+                if(s.filter!=='none' || s.visibility==='hidden' || s.display==='none' || Number(s.opacity)===0) return false;
+            }
+            return true;
+        });
+        if(full.length!==1) return waiting('Waiting for WhatsApp to load the full photo, rather than its blurred preview.');
+        const img=full[0],src=img.currentSrc||img.src;
+        const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),10000);
         try {
             const response=await fetch(src,{signal:abort.signal});
-            if(!response.ok) throw Error('Photo could not be retrieved.');
+            if(!response.ok) throw Error('Original photo could not be retrieved.');
             const blob=await response.blob();
-            if(blob.size > %d) throw Error('Photo exceeds the 20 MB capture limit.');
+            if(blob.size>%d) throw Error('Photo exceeds the 20 MB capture limit.');
             const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(Error('Photo read failed.'));r.readAsDataURL(blob);});
-            // A navigation during retrieval invalidates the result.
-            const now=document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]');
-            if(!now || 'name:'+now.textContent.trim() !== %s) throw Error('Group changed during capture. Retry in the selected group.');
-            return {data:data.slice(data.indexOf(',')+1),width:img.naturalWidth,height:img.naturalHeight};
-        } catch(e) {return {error:String(e.message || e)};} finally {clearTimeout(timer);}
-    })()""" % (json.dumps(group_id), json.dumps(message_id), int(index), MAX_IMAGE_BYTES, json.dumps(group_id))
+            if(!validGroup() || owner.interrupted || !modal.isConnected || (img.currentSrc||img.src)!==src)
+                throw Error('The group or photo changed during capture. Retry in the selected group.');
+            return {data:data.slice(data.indexOf(',')+1),width:img.naturalWidth,height:img.naturalHeight,quality:'full_viewer'};
+        } catch(e){return {error:String(e.message||e)};}
+        finally{clearTimeout(timer);finish(true);}
+    })()""" % (json.dumps(group_id), json.dumps(message_id), int(index), MAX_IMAGE_BYTES)

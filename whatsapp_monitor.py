@@ -48,16 +48,21 @@ const incomingAuthors = byGroup.get(groupKey);
 const messageRows = [...main.querySelectorAll('[data-id][data-testid^="conv-msg-"]')];
 const isQuote = el => !!el.closest('[data-testid="quoted-message"]');
 const metadata = row => [...row.querySelectorAll('[data-pre-plain-text]')].find(el => !isQuote(el));
-const authorKey = el => {
+const authorKey = row => {
+    const el=metadata(row);
     const value = el && el.getAttribute('data-pre-plain-text');
     const match = value && value.match(/^\[[^\]]+\]\s*(.+?):\s*$/s);
-    return match ? match[1] : null;
+    if(match) return match[1];
+    // Photos without captions may omit copyable-text metadata. The author
+    // marker is also rendered on incoming media rows in the verified page.
+    const author=[...row.querySelectorAll('[data-testid="author"]')].find(e=>!isQuote(e));
+    return author?.textContent.trim() || null;
 };
 // A sender is classified as incoming only after an explicit incoming-tail
 // marker is observed. This also handles consecutive messages without a tail.
 for (const row of messageRows) {
     const tail = row.querySelector('[data-testid="tail-in"]');
-    const author = authorKey(metadata(row));
+    const author = authorKey(row);
     if (tail && !isQuote(tail) && author) incomingAuthors.add(author);
 }
 const messages = [];
@@ -72,12 +77,14 @@ for (const row of messageRows) {
         .filter(el => !isQuote(el));
     const message = {id: row.getAttribute('data-id'), text};
     const incomingTail = row.querySelector('[data-testid="tail-in"]');
-    const incoming = (incomingTail && !isQuote(incomingTail)) || incomingAuthors.has(authorKey(metadata(row)));
+    const outgoingTail = row.querySelector('[data-testid="tail-out"]');
+    const outgoing = outgoingTail && !isQuote(outgoingTail);
+    const incoming = !outgoing && ((incomingTail && !isQuote(incomingTail)) || incomingAuthors.has(authorKey(row)));
     if (text) {
         if (incoming) messages.push(message);
         else unclassified.push(message);
     }
-    images.forEach((img,index) => (incoming ? photos : unclassifiedPhotos).push({message_id:message.id,index}));
+    if (!outgoing) images.forEach((img,index) => (incoming ? photos : unclassifiedPhotos).push({message_id:message.id,index}));
 }
 return {group_id: groupKey, name, identity_method: 'exact_name', messages, unclassified, photos, unclassifiedPhotos};
 """
@@ -131,7 +138,14 @@ def restore_group_script(name):
         const titles = [...side.querySelectorAll('span[title]')]
             .filter(el => el.getAttribute('title') === %s);
         if (titles.length !== 1) return false;
-        titles[0].click(); return true;
+        // The live WhatsApp chat list responds to pointer-down selection;
+        // click() alone did not restore the conversation in this version.
+        const target=titles[0];
+        target.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,button:0,buttons:1,pointerType:'mouse',isPrimary:true}));
+        target.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,button:0,buttons:1}));
+        target.dispatchEvent(new PointerEvent('pointerup', {bubbles:true,button:0,buttons:0,pointerType:'mouse',isPrimary:true}));
+        target.dispatchEvent(new MouseEvent('mouseup', {bubbles:true,button:0}));
+        target.click(); return true;
     })()""" % json.dumps(name)
 
 
@@ -324,7 +338,7 @@ class CaptureEngine:
 
 
 def run_whatsapp_browser(db_path, run_id, parent_pid):
-    """WebView2 main loop lives in this process; a Python worker polls every 2s."""
+    """WebView2 runs here; Python polls independently of hidden-page timers."""
     import webview
 
     # No filesystem-capable Python bridge is exposed to WhatsApp's document.
@@ -347,7 +361,12 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
         extraction_worker = GRNExtractionWorker(db_path, stopping)
         extraction_worker.thread.start()
         photo_results = queue.Queue()
-        photo_inflight = None
+        photo_inflight = {}
+        photo_wake = threading.Event()
+
+        def photo_done(source_id, token, result):
+            photo_results.put((source_id, token, result))
+            photo_wake.set()
         engine = CaptureEngine(store, run_id)
         last_restore = 0
         selection_error = None
@@ -409,21 +428,25 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                 if stopping.is_set():
                     break
                 while not photo_results.empty():
-                    source_id, result = photo_results.get_nowait()
+                    source_id, token, result = photo_results.get_nowait()
                     # Ignore late callbacks from a timed-out request.
-                    if photo_inflight is None or source_id != photo_inflight[0]:
+                    if photo_inflight.get(source_id) != token:
                         continue
                     try:
-                        if not isinstance(result, dict) or result.get("error") or not result.get("data"):
+                        if isinstance(result, dict) and result.get("waiting"):
+                            photos.capture_waiting(source_id, result.get("error", "Loading original photo."))
+                        elif not isinstance(result, dict) or result.get("error") or not result.get("data"):
                             photos.capture_failed(source_id, result.get("error", "Photo retrieval failed.") if isinstance(result, dict) else "Photo retrieval failed.")
                         else:
                             photos.save_image(source_id, result["data"])
                     except (OSError, ValueError, sqlite3.Error) as exc:
                         photos.capture_failed(source_id, str(exc))
-                    photo_inflight = None
-                if photo_inflight and time.monotonic() - photo_inflight[1] > 20:
-                    photos.capture_failed(photo_inflight[0], "Photo retrieval timed out. Retry capture.")
-                    photo_inflight = None
+                    photo_inflight.pop(source_id, None)
+                for source_id, started in tuple(photo_inflight.items()):
+                    if time.monotonic() - started > 15:
+                        photos.capture_failed(source_id, "Photo retrieval timed out. Capture will retry.")
+                        photo_inflight.pop(source_id, None)
+                snapshot = None
                 if not loaded.is_set():
                     engine.report("Starting", "Loading WhatsApp Web...")
                 elif not store.setting("enabled", False):
@@ -464,18 +487,24 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                         except sqlite3.Error:
                             engine.report("Storage error", "Capture is waiting for local inbox storage; requests will be retried.")
                 # Explicit imports can also complete while monitoring is paused for review.
-                if loaded.is_set() and photo_inflight is None and store.setting("group"):
-                    pending = photos.pending_capture(store.setting("group")["id"])
-                    if pending:
-                        source = pending[0]
-                        photo_inflight = (source["id"], time.monotonic())
+                if loaded.is_set() and len(photo_inflight) < 4 and store.setting("group"):
+                    if snapshot is None:
+                        snapshot = window.evaluate_js(read_script())
+                    visible_ids = {p['message_id'] for key in ('photos', 'unclassifiedPhotos')
+                                   for p in snapshot.get(key, [])} if isinstance(snapshot, dict) else set()
+                    pending = photos.pending_capture(store.setting("group")["id"],
+                        limit=4-len(photo_inflight), exclude_ids=photo_inflight, visible_ids=visible_ids)
+                    for source in pending:
+                        token = time.monotonic()
+                        photo_inflight[source["id"]] = token
                         try:
                             window.evaluate_js(photo_read_script(source["group_id"], source["message_id"], source["photo_index"]),
-                                callback=lambda result, source_id=source["id"]: photo_results.put((source_id, result)))
+                                callback=lambda result, source_id=source["id"], token=token: photo_done(source_id, token, result))
                         except Exception as exc:
                             photos.capture_failed(source["id"], f"Photo retrieval failed ({type(exc).__name__}). Retry capture.")
-                            photo_inflight = None
-                stopping.wait(2)
+                            photo_inflight.pop(source["id"], None)
+                photo_wake.wait(.5)
+                photo_wake.clear()
         except Exception as exc:
             try:
                 engine.report("Failed", f"WhatsApp helper stopped ({type(exc).__name__}). Reconnect from NEXUS.")

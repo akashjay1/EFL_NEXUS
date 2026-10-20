@@ -101,6 +101,46 @@ class GRNStorageTests(unittest.TestCase):
         self.store.retry()
         self.assertEqual(len(self.store.pending_capture("name:Test group")), 1)
 
+    def test_detection_is_listed_before_image_or_extraction(self):
+        self.store.discover(snapshot_double())
+        pending = self.store.pending_entries()
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["message_id"], "test-message")
+        self.assertFalse(self.store.documents())
+        self.store.save_image(pending[0]["id"], image_double())
+        self.assertFalse(self.store.pending_entries())
+        self.assertEqual(len(self.store.documents()), 1)
+
+    def test_unknown_sender_is_visible_but_cannot_be_captured_until_verified(self):
+        snapshot = snapshot_double()
+        snapshot['unclassifiedPhotos'] = snapshot.pop('photos')
+        self.store.discover(snapshot)
+        self.assertEqual(self.store.pending_entries()[0]['incoming_verified'], 0)
+        self.assertFalse(self.store.pending_capture('name:Test group'))
+        self.store.discover(snapshot_double())
+        self.assertEqual(len(self.store.pending_capture('name:Test group')), 1)
+
+    def test_capture_schedules_visible_photos_without_blocking_on_old_or_inflight(self):
+        for message in ('old', 'first', 'second', 'third'):
+            self.store.discover(snapshot_double(message))
+        visible = {'first', 'second', 'third'}
+        pending = self.store.pending_capture('name:Test group', limit=4, visible_ids=visible)
+        self.assertEqual([r['message_id'] for r in pending], ['first', 'second', 'third'])
+        self.store.capture_failed(pending[0]['id'], 'Download failed')
+        remaining = self.store.pending_capture('name:Test group', limit=4,
+            exclude_ids=[pending[1]['id']], visible_ids=visible)
+        self.assertEqual([r['message_id'] for r in remaining], ['third'])
+        self.assertFalse(self.store.pending_capture('name:Test group', visible_ids=set()))
+
+    def test_loading_original_does_not_increase_failure_backoff(self):
+        self.store.discover(snapshot_double())
+        source = self.store.pending_entries()[0]
+        before = time.time()
+        self.store.capture_waiting(source['id'], 'Loading original')
+        current = self.store.pending_entries()[0]
+        self.assertEqual(current['capture_attempts'], 0)
+        self.assertLess(current['next_try'] - before, 1)
+
     def test_review_and_retry_preserve_identifiers_and_status(self):
         record = self.document()
         self.store.save_grn_review(record, "EGDC", "000123")
@@ -200,10 +240,71 @@ class GRNStorageTests(unittest.TestCase):
             self.assertFalse(worker.thread.is_alive())
 
 
+class GRNInboxRefreshTests(unittest.TestCase):
+    def setUp(self):
+        import tkinter as tk
+        from types import SimpleNamespace
+        from whatsapp_grn_inbox import WhatsAppGRNInbox
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.addCleanup(self.root.destroy)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.store = GRNInboxStore(Path(directory.name) / 'inbox.sqlite3')
+        self.addCleanup(self.store.close)
+        self.store.set_settings(group={'id': 'name:Test group', 'name': 'Test group'})
+        self.store.set_default_warehouse('name:Test group', 'EGDC')
+        # Minimal controller test double: no browser is launched by these UI checks.
+        controller = SimpleNamespace(store=self.store, run_id='test-run', start=lambda: None)
+        self.inbox = WhatsAppGRNInbox(self.root, self.root, controller, {})
+        self.addCleanup(self.inbox.frame.destroy)
+        self.root.update_idletasks()
+
+    def test_pending_detection_reaches_ui_without_waiting_for_photo_or_ocr(self):
+        start = time.monotonic()
+        self.store.discover(snapshot_double())
+        while not self.inbox.tree.get_children() and time.monotonic() - start < 1.5:
+            self.root.update()
+            time.sleep(.01)
+        self.assertEqual(len(self.inbox.tree.get_children()), 1)
+        key = self.inbox.tree.get_children()[0]
+        self.assertTrue(key.startswith('source:'))
+        self.assertEqual(self.inbox.tree.item(key, 'values')[1], 'Waiting for original photo')
+        self.assertLess(time.monotonic() - start, 1.5)
+        self.assertFalse(self.store.documents())
+
+    def test_pending_selection_transitions_to_captured_document_in_place(self):
+        self.store.discover(snapshot_double())
+        self.inbox.refresh()
+        source = self.store.pending_entries()[0]
+        self.inbox.tree.selection_set(f"source:{source['id']}")
+        self.inbox._selected()
+        self.assertIsNone(self.inbox.selected_id)
+        self.assertFalse(self.inbox.save_review())
+        record = self.store.save_image(source['id'], image_double())
+        self.inbox.refresh()
+        self.assertEqual(self.inbox.selected_id, record)
+        self.assertEqual(self.inbox.tree.selection(), (str(record),))
+        self.assertFalse(any(key.startswith('source:') for key in self.inbox.tree.get_children()))
+
+    def test_arrivals_preserve_unsaved_values_and_selection(self):
+        self.store.discover(snapshot_double())
+        record = self.store.save_image(self.store.pending_entries()[0]['id'], image_double())
+        self.inbox.refresh()
+        self.inbox.tree.selection_set(str(record))
+        self.inbox._selected()
+        self.inbox.gatepass.set('000123')
+        self.store.discover(snapshot_double('second-message'))
+        self.inbox.refresh()
+        self.assertEqual(self.inbox.gatepass.get(), '000123')
+        self.assertTrue(self.inbox.dirty)
+        self.assertEqual(self.inbox.tree.selection(), (str(record),))
+
+
 class GRNValidationTests(unittest.TestCase):
     def test_numbers_are_not_coerced_or_restricted_to_six_digits(self):
         self.assertEqual(validate_grn_fields("EGDC", "00012345"), [])
-        for value in ("73O355", "１２３", "123\n", "", "*123*"):
+        for value in ("73O355", "ï¼‘ï¼’ï¼“", "123\n", "", "*123*"):
             self.assertTrue(validate_grn_fields("EGDC", value))
 
     def test_header_requires_adjacent_label_words(self):

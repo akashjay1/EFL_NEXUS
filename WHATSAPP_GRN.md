@@ -11,9 +11,9 @@ capture remains active in the same group.
    **Default GRN warehouse** and click **Save GRN Warehouse**. The choice belongs
    to this group; it is not inferred from the photograph.
    If a restart shows **Group selection required**, open the saved group in the
-   Browser tab. The observed WhatsApp version did not reliably reopen that chat
-   through the existing automatic restoration adapter, although login and inbox
-   records persisted. Capture resumes after the saved group is open.
+   Browser tab. The adapter restores the exact saved name through validated pointer interactions
+   and verifies the selected group before capture. If restoration is unavailable
+   or ambiguous, capture resumes after you open the saved group manually.
 2. New incoming photos appear in **GRN Inbox**. Existing visible history is
    skipped on first setup/upgrade. For an older message, pause, scroll to it,
    then choose **Import Visible Photos**. Resume monitoring afterward.
@@ -36,26 +36,40 @@ checks provide the additional duplicate guard.
 
 ## Capture and recognition limits
 
-The experimental adapter reads verified incoming message rows from the rendered
-WhatsApp page. A photo is one `image-thumb` container, which can hold both a
-thumbnail and a full image. Capture chooses its largest loaded image and reads
-only local `blob:https://web.whatsapp.com/` media. Quoted reply images, avatars,
-stickers, document attachments, PDFs, and unverified senders are not imported
-as document photos. Group binding retains the existing exact-name limitation
-described in [WHATSAPP_GDN.md](WHATSAPP_GDN.md).
+The experimental adapter polls the selected group every 0.5 seconds from Python.
+As soon as a photo is detected, its durable source record appears in the GRN
+Inbox, before download or OCR finishes. The list checks for updates every 250 ms
+and updates rows in place, preserving the selection and unsaved edits. These are
+polling intervals, not a guarantee about WhatsApp/network delivery time.
 
-Retrieval failures remain visible and retry every 30 seconds. If the full photo
-is not loaded, open it in WhatsApp, close the viewer, and choose **Retry Capture**.
-If WhatsApp shows a file-size download overlay, download that photo first. A
-full-size blurred preview can have the same dimensions as the original. If the
-inbox image is blurred, load the original in WhatsApp, select its unreviewed
-inbox record, then choose **Retry Capture** to replace the local image and rerun
-OCR. Saved reviews and transferred records cannot be replaced by recapture.
-If the row has left the rendered history, load that message again. Unsupported
-markup or unavailable media is not silently treated as a completed capture.
-Capture is limited to 20 MB and 30 megapixels per photo. Media metadata is saved
-first; the source is linked to a document only after validated image bytes are
-written and the database transaction succeeds.
+Captionless photos can use the rendered author marker when copyable-text metadata
+is absent. Photos whose sender is still uncertain appear as **Sender verification
+required**; they are not silently dropped or assumed incoming. Known outgoing
+messages and quoted images are excluded. Group binding retains the exact-name
+limitation described in [WHATSAPP_GDN.md](WHATSAPP_GDN.md).
+
+The adapter opens the specific message's WhatsApp photo viewer, reads its loaded
+`media-image` blob, and closes the viewer it opened. It excludes CSS-blurred,
+hidden, incomplete, and nonlocal images. It never saves the chat thumbnail as an
+original. An already open viewer or user interaction pauses automatic retrieval
+until the viewer is closed. The Browser tab can briefly show this loading process.
+If WhatsApp itself cannot load an original, the entry remains visible as waiting
+or retrying; open/download that photo manually in WhatsApp if necessary. The app
+cannot restore detail that is absent from the sender's original image.
+
+Up to four asynchronous retrieval requests can be pending; access to WhatsApp's
+single photo viewer is serialized. One slow photo does not hide other detected
+entries or block text monitoring. Failed retrievals retry after 1, 2, 5, 15, then
+30 seconds. Waiting for the viewer does not increase the failure backoff. Pending
+photos outside rendered history stay listed; reopen their message to finish
+capture. Complete offline history recovery is not provided.
+
+For a previously captured blurred image, select its unreviewed inbox record and
+choose **Retry Capture** with its message loaded. This replaces the image and
+reruns OCR. Saved reviews and transferred records are protected. **View Full
+Photo** offers Fit, 100%, and 200% views with scrollbars. Capture is limited to
+20 MB and 30 megapixels per photo. The source is linked to a document only after
+validated image bytes are written and the database transaction succeeds.
 
 OCR tries four orientations, corrects modest skew, and uses adaptive thresholding
 when camera borders or shadows prevent header detection. Only numbers adjacent
@@ -143,3 +157,30 @@ copies; these are not independent documents or a production accuracy estimate.
   and model payloads matched the tested directory build by SHA-256; captured
   photos, inbox databases, and WebView profiles were absent. Evidence:
   `installer-payload-check.json` and `zip-check.json` under the validation folder.
+
+### Photo/list refresh correction, 2026-10-20
+
+The source now polls at 0.5 seconds and lists durable detections before retrieval
+or OCR. Storage/UI tests cover visible pending rows, uncertain senders, selective
+retry scheduling, and preserving an edited selection. Seven JavaScript state
+checks use an explicitly labelled DOM/media double to cover full-viewer capture,
+blurred/incomplete/missing full images, an existing user viewer, wrong groups,
+and fetch failure. These doubles do not establish WhatsApp markup compatibility.
+
+A real linked WebView2 session verified opening the selected incoming photo,
+retrieving a clear 1200 ? 1600 full-viewer image (248,758 bytes), and closing the
+owned viewer in 1.22 seconds. This was an already rendered photo, not an incoming
+arrival-latency test. Evidence: `build/grn-validation/full-viewer-verification.json`
+and `full-viewer-verified.image`, excluded from Git. New message arrival latency,
+large bursts and unavailable-original recovery still require live observation.
+
+The final check ran 66 WhatsApp tests and 16 existing main-app/Pending Jobs
+regressions successfully. The real photo above read `734744` from both printed
+text and its header barcode, with no OCR warnings. The directory build completed
+successfully, and its real frozen helper embedded and exited cleanly (code 0)
+using a separate temporary, logged-out profile. Evidence: `photo-fix-tests.log`,
+`photo-fix-ocr-check.json`, `photo-fix-build.log`, and
+`photo-fix-frozen-smoke.json` under `build/grn-validation`. The running application
+was subsequently observed Monitoring the saved group with a fresh heartbeat and
+no gap flag. The installer/update ZIP from the earlier build was not regenerated
+for this correction; use the refreshed directory build or the current source.
