@@ -97,9 +97,7 @@ class WhatsAppController:
         self.state = "Paused" if self.store.setting("group") else "Setup required"
         self.detail = "Open WhatsApp to sign in and choose your GDN group."
         self.new_count = self.store.counts()[1]
-        self.grn_new_count = self.store.db.execute("""SELECT
-            (SELECT count(*) FROM grn_documents WHERE action='New') +
-            (SELECT count(*) FROM grn_sources WHERE skipped=0 AND document_id IS NULL)""").fetchone()[0]
+        self.grn_new_count = self.store.grn_new_count()
         self.gap = self.store.setting("capture_gap", False)
         self.listeners = []
         self._last_notice = None
@@ -253,9 +251,7 @@ class WhatsAppController:
             return
         try:
             self.new_count = self.store.counts()[1]
-            self.grn_new_count = self.store.db.execute("""SELECT
-                (SELECT count(*) FROM grn_documents WHERE action='New') +
-                (SELECT count(*) FROM grn_sources WHERE skipped=0 AND document_id IS NULL)""").fetchone()[0]
+            self.grn_new_count = self.store.grn_new_count()
             self.gap = self.store.setting("capture_gap", False)
             if self.restart_at is not None and time.monotonic() >= self.restart_at:
                 self.restart_at = None

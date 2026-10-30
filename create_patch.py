@@ -69,12 +69,22 @@ IGNORED_FILES = {
     "updater.log",
     "reconciliation_queue.json",
     ".load_reconciliation_tool_settings.json",
+    ".env",
+    "inbox.sqlite3",
+    "inbox.sqlite3-wal",
+    "inbox.sqlite3-shm",
 }
 
 
 def _should_ignore_file(rel_posix: str) -> bool:
     rel_lower = rel_posix.lower()
     base_lower = os.path.basename(rel_lower)
+    directories = rel_lower.split('/')[:-1]
+    if any(part in ('grn_images', 'whatsapp_gdn', 'diagnostics') or part.startswith('chrome_automation_profile_')
+           for part in directories):
+        return True
+    if base_lower.startswith('.env.') or base_lower.endswith(('.sqlite', '.sqlite3', '.sqlite3-wal', '.sqlite3-shm')):
+        return True
     if rel_lower in IGNORED_FILES or base_lower in IGNORED_FILES:
         return True
     if base_lower.startswith("~$"):

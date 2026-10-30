@@ -3,15 +3,25 @@
 import tkinter as tk
 from tkinter import ttk
 
+from korber_tool import KorberApp
 from whatsapp_gdn import GDNInboxStore
 from whatsapp_inbox import WhatsAppGDNInbox
 from whatsapp_grn import GRNInboxStore, GRN_WAREHOUSES
 from whatsapp_grn_inbox import WhatsAppGRNInbox
 
 
+WHATSAPP_LANES = (("WhatsApp Lane 1", "whatsapp_lane_1"),
+                  ("WhatsApp Lane 2", "whatsapp_lane_2"))
+
+
 class WhatsAppPage:
-    def __init__(self, root, container, controller, lanes, ensure_lanes=None):
+    def __init__(self, root, container, controller):
         self.root, self.controller = root, controller
+        self.lanes = {}
+        self.lane_tabs = {}
+        self.lane_canvases = {}
+        self.grn_settings = None
+        self.browser_host = None
         self.visible = False
         self.frame = ttk.Frame(container, padding=12)
         self.frame.pack(fill="both", expand=True)
@@ -56,6 +66,22 @@ class WhatsAppPage:
         self.notebook.add(self.browser_tab, text="  Browser  ")
         self.notebook.add(self.inbox_tab, text="  GDN Inbox  ")
         self.notebook.add(self.grn_tab, text="  GRN Inbox  ")
+        for label, profile in WHATSAPP_LANES:
+            tab = ttk.Frame(self.notebook)
+            self.notebook.add(tab, text=f"  {label}  ")
+            self.lane_tabs[label] = tab
+            canvas = tk.Canvas(tab, highlightthickness=0, background="#faf8f2")
+            scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+            canvas.configure(yscrollcommand=scrollbar.set)
+            scrollbar.pack(side="right", fill="y")
+            canvas.pack(side="left", fill="both", expand=True)
+            host = ttk.Frame(canvas)
+            window_id = canvas.create_window((0, 0), window=host, anchor="nw")
+            host.bind("<Configure>", lambda event, c=canvas: c.configure(scrollregion=c.bbox("all")))
+            canvas.bind("<Configure>", lambda event, c=canvas, w=window_id: c.itemconfigure(w, width=event.width))
+            canvas.bind("<MouseWheel>", lambda event, c=canvas: c.yview_scroll(-int(event.delta / 120), "units"))
+            self.lane_canvases[label] = canvas
+            self.lanes[label] = KorberApp(root, container=host, standalone=False, profile_name=profile)
         ttk.Label(self.browser_tab, text="Sign in using the QR code, open your GDN group, then choose Use Open Group. "
                   "Pause before changing the monitored group.", wraplength=1060).pack(anchor="w", padx=8, pady=(8, 4))
         ttk.Checkbutton(self.browser_tab, text="Also import messages currently visible when selecting the group",
@@ -65,9 +91,9 @@ class WhatsAppPage:
         ttk.Label(self.browser_host, text="Choose Open / Reconnect to load WhatsApp Web inside NEXUS.",
                   wraplength=700).place(relx=.5, rely=.5, anchor="center")
         controller.set_host(self.browser_host)
-        self.inbox = WhatsAppGDNInbox(root, lanes, GDNInboxStore(controller.store.path),
-                                      container=self.inbox_tab, controller=controller, ensure_lanes=ensure_lanes)
-        self.grn_inbox = WhatsAppGRNInbox(root, self.grn_tab, controller, lanes, ensure_lanes)
+        self.inbox = WhatsAppGDNInbox(root, self.lanes, GDNInboxStore(controller.store.path),
+                                      container=self.inbox_tab, controller=controller)
+        self.grn_inbox = WhatsAppGRNInbox(root, self.grn_tab, controller, self.lanes)
         self.notebook.bind("<<NotebookTabChanged>>", lambda event: self._visibility())
         controller.listeners.append(self._changed)
         self._changed(controller)
@@ -83,7 +109,9 @@ class WhatsAppPage:
         self.select_button.configure(state="disabled" if group and enabled else "normal")
         self.notebook.tab(self.inbox_tab, text=f"  GDN Inbox ({controller.new_count} new)  ")
         self.notebook.tab(self.grn_tab, text=f"  GRN Inbox ({getattr(controller, 'grn_new_count', 0)} new)  ")
-        self.gap.set("Possible capture gap. Compare recent group messages and import any missing requests." if controller.gap else "")
+        self.gap.set("\n".join(filter(None, [
+            "Possible capture gap. Compare recent group messages and import any missing requests." if controller.gap else "",
+            controller.store.setting("done_reply_notice", "")])))
         if controller.gap:
             self.ack_button.pack(side="right")
         else:
@@ -119,7 +147,8 @@ class WhatsAppPage:
 
     def _destroyed(self, event):
         if event.widget is self.frame:
-            self.grn_settings.close()
+            if self.grn_settings is not None:
+                self.grn_settings.close()
             if self._changed in self.controller.listeners:
                 self.controller.listeners.remove(self._changed)
             self.controller.set_visible(False)

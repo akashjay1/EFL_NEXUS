@@ -1,10 +1,12 @@
-"""Review UI shared by both Korber lanes. Browser events never call Tk directly."""
+"""WhatsApp review and dispatch UI. Browser events never call Tk directly."""
 
 import sqlite3
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from whatsapp_gdn import FIELD_LABELS, GDN_FIELDS, GDNInboxStore, form_fields, validate_fields
+from whatsapp_gdn import (FIELD_LABELS, GDN_FIELDS, GDNInboxStore, form_fields,
+                          gatepass_is_active, launch_gatepass, received_label,
+                          recover_gatepass_runs, validate_fields)
 
 
 class WhatsAppGDNInbox:
@@ -13,7 +15,9 @@ class WhatsAppGDNInbox:
         self.store = store if store is not None else GDNInboxStore()
         self.controller = controller
         self.ensure_lanes = ensure_lanes
+        recover_gatepass_runs(self.store, self.lanes, "GDN")
         self.selected_id = None
+        self._run_states = {}
         self.closed = False
         self.after_id = None
         self.window = ttk.Frame(container) if container is not None else tk.Toplevel(root)
@@ -42,10 +46,11 @@ class WhatsAppGDNInbox:
         panes.add(left, weight=1)
         panes.add(right, weight=1)
         ttk.Label(left, text="Requests (saved locally)", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Button(left, text="Clear List", command=self.clear_list).pack(anchor="w", pady=(4, 0))
         table = ttk.Frame(left)
         table.pack(fill="both", expand=True, pady=(6, 10))
-        self.tree = ttk.Treeview(table, columns=("gatepass", "source", "action"), show="headings", height=9, selectmode="browse")
-        for key, label, width in (("gatepass", "Gate Pass", 95), ("source", "Source", 150), ("action", "State", 125)):
+        self.tree = ttk.Treeview(table, columns=("gatepass", "source", "action", "received"), show="headings", height=9, selectmode="browse")
+        for key, label, width in (("gatepass", "Gate Pass", 85), ("source", "Source", 115), ("action", "State", 110), ("received", "Received", 195)):
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, minwidth=70)
         scroll = ttk.Scrollbar(table, orient="vertical", command=self.tree.yview)
@@ -80,7 +85,7 @@ class WhatsAppGDNInbox:
         lane_actions = ttk.Frame(right)
         lane_actions.grid(row=7, column=0, columnspan=2, sticky="ew")
         ttk.Label(lane_actions, text="Target lane").pack(side="left")
-        self.lane_choice = ttk.Combobox(lane_actions, state="readonly", values=list(lanes), width=14)
+        self.lane_choice = ttk.Combobox(lane_actions, state="readonly", values=list(lanes), width=19)
         self.lane_choice.pack(side="left", padx=8)
         if lanes:
             self.lane_choice.current(0)
@@ -88,6 +93,7 @@ class WhatsAppGDNInbox:
         actions.grid(row=8, column=0, columnspan=2, sticky="ew", pady=8)
         ttk.Button(actions, text="Save Review", command=self.save_review).pack(side="left")
         ttk.Button(actions, text="Fill Form", command=lambda: self.apply_request(False)).pack(side="left", padx=6)
+        ttk.Button(actions, text="Run Gatepass", command=lambda: self.apply_request(False, start_run=True)).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Add to Queue", command=lambda: self.apply_request(True)).pack(side="left")
         ttk.Label(right, text="Original message").grid(row=9, column=0, columnspan=2, sticky="w", pady=(4, 4))
         self.raw_text = tk.Text(right, height=9, width=38, wrap="word", state="disabled", font=("Segoe UI", 9))
@@ -121,13 +127,40 @@ class WhatsAppGDNInbox:
 
     def refresh(self, select_id=None):
         selected = select_id if select_id is not None else self.selected_id
+        previous_states, self._run_states = self._run_states, {}
         self.tree.delete(*self.tree.get_children())
         for record in self.store.records():
+            self._run_states[record["id"]] = record["run_state"]
             self.tree.insert("", "end", iid=str(record["id"]), values=(
-                record["fields"]["gatepass"], record["source"], record["action"]))
+                record["fields"]["gatepass"], record["source"], record["run_state"], received_label(record)))
         if selected is not None and self.tree.exists(str(selected)):
             self.tree.selection_set(str(selected))
             self.tree.see(str(selected))
+            state = self._run_states[selected]
+            if previous_states.get(selected) == "Running" and state != "Running":
+                self.status.set(f"GDN state: {state}. You can use Run Gatepass again.")
+        elif selected is not None:
+            self.reset_selection()
+
+    def reset_selection(self):
+        self.selected_id = None
+        self.tree.selection_remove(*self.tree.selection())
+        for editor in self.editors.values():
+            editor.delete("1.0" if isinstance(editor, tk.Text) else 0, "end")
+        self.door.set("")
+        self.raw_text.configure(state="normal")
+        self.raw_text.delete("1.0", "end")
+        self.raw_text.configure(state="disabled")
+        self.warnings.set("Select a request to review.")
+
+    def clear_list(self):
+        try:
+            count = self.store.clear_list()
+            self.reset_selection()
+            self.refresh()
+            self.status.set(f"Cleared {count} requests from this list. History and duplicate protection are retained.")
+        except sqlite3.Error as exc:
+            self.status.set(f"Could not clear the list: {exc}")
 
     def _selected(self, event=None):
         selection = self.tree.selection()
@@ -141,6 +174,9 @@ class WhatsAppGDNInbox:
 
     def load_selected(self):
         record = self.store.get(self.selected_id)
+        if record is None or record["hidden_reason"]:
+            self.reset_selection()
+            return
         for key, editor in self.editors.items():
             if isinstance(editor, tk.Text):
                 editor.delete("1.0", "end")
@@ -209,26 +245,35 @@ class WhatsAppGDNInbox:
             self.status.set("Select a request first.")
             return
         record = self.store.get(self.selected_id)
-        if record["action"].startswith("Queued"):
-            self.status.set("This request is already queued. Review it in the target lane's queue.")
+        if record is None or record["hidden_reason"]:
+            self.reset_selection()
+            self.status.set("This request was cleared or marked DONE.")
+            return
+        if record["run_state"] == "Running":
+            self.status.set("This request is running. Wait for it to finish or stop its lane.")
             return
         fields = self._fields()
         try:
             self.store.save_review(self.selected_id, fields)
-        except sqlite3.Error as exc:
+        except (ValueError, sqlite3.Error) as exc:
             messagebox.showerror("Save failed", str(exc), parent=self.window)
             return
         self.refresh()
         self.show_warnings(record, fields)
         self.status.set("Review saved. Complete any missing fields before filling or queuing.")
 
-    def apply_request(self, enqueue):
+    def apply_request(self, enqueue, start_run=False):
+        recover_gatepass_runs(self.store, self.lanes, "GDN")
         if self.selected_id is None:
             self.status.set("Select a request first.")
             return False
         record = self.store.get(self.selected_id)
-        if record["action"].startswith("Queued"):
-            self.status.set("This request is already queued. Review it in the target lane's queue.")
+        if record is None or record["hidden_reason"]:
+            self.reset_selection()
+            self.status.set("This request was cleared or marked DONE.")
+            return False
+        if record["run_state"] == "Running":
+            self.status.set("This request is running. Wait for it to finish or stop its lane.")
             return False
         fields = self._fields()
         errors = validate_fields(fields, self._warehouses())
@@ -244,17 +289,11 @@ class WhatsAppGDNInbox:
         if lane.queue_running or str(lane.gdn_btn.cget("state")) == "disabled":
             self.status.set(f"{lane_name} is busy. Choose another lane or wait for it to finish.")
             return False
-        identity = tuple(fields[key].casefold() for key in ("warehouse", "client", "gatepass"))
-        if enqueue:
-            related_queued = any(r["action"].startswith("Queued") for r in self.store.related(fields, self.selected_id))
-            in_queue = any(
-                item["doc_type"] == "GDN" and
-                tuple(str(item[k]).strip().casefold() for k in ("warehouse_id", "client_code", "gate_pass_number")) == identity
-                for other_lane in self.lanes.values() for item in other_lane.queue
-            )
-            if related_queued or in_queue:
-                self.status.set("This warehouse, client, and gate pass is already queued. Compare the existing request first.")
-                return False
+        related_running = any(r["run_state"] == "Running" for r in self.store.related(fields, self.selected_id))
+        if related_running or gatepass_is_active(self.lanes, "GDN", {
+                "warehouse_id": fields["warehouse"], "client_code": fields["client"], "gate_pass_number": fields["gatepass"]}):
+            self.status.set("This warehouse, client, and gate pass is already queued or running. Wait for that job to finish or stop it.")
+            return False
         try:
             # Persist edits before changing any lane state.
             self.store.save_review(self.selected_id, fields)
@@ -264,16 +303,20 @@ class WhatsAppGDNInbox:
                 lane.add_to_queue("GDN")
             action = f"Queued: {lane_name}" if enqueue else f"Filled: {lane_name}"
             self.store.save_review(self.selected_id, fields, action)
-        except (OSError, sqlite3.Error) as exc:
-            self.status.set(f"Could not finish recording the action: {exc}. Check the lane before retrying.")
+            if start_run:
+                launch_gatepass(self.store, self.selected_id, "GDN", lane_name, lane)
+        except (ValueError, RuntimeError, OSError, sqlite3.Error, tk.TclError) as exc:
+            self.refresh()
+            self.status.set(f"Could not start the action: {exc}")
             return False
         self.refresh()
         self.show_warnings(record, fields)
-        self.status.set(f"{action}. No GDN has been created automatically.")
+        self.status.set(f"GDN running in {lane_name}. Its state changes to Completed when the flow finishes; you can then run it again."
+                        if start_run else f"{action}. No GDN has been created automatically.")
         return True
 
 
-def open_inbox(root, lanes):
+def open_inbox(root):
     navigate = getattr(root, "_open_whatsapp_page", None)
     if navigate:
         return navigate()
@@ -294,7 +337,7 @@ def open_inbox(root, lanes):
         window.geometry("1140x860")
         window.minsize(960, 740)
         root._whatsapp_standalone = window
-        page = WhatsAppPage(root, window, controller, lanes)
+        page = WhatsAppPage(root, window, controller)
         window._whatsapp_page = page
         window.protocol("WM_DELETE_WINDOW", lambda: (controller.set_visible(False), window.withdraw()))
         window.bind("<Destroy>", lambda event: controller.set_visible(False) if event.widget is window else None, add="+")

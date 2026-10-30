@@ -57,6 +57,20 @@ class OCRSafetyTests(unittest.TestCase):
         result = extract_gatepass(self.document_double(), self.directory / "result")
         self.assertEqual(result["gatepass"], "000123")
 
+    def test_rotated_document_still_fits_the_document_budget(self):
+        path = self.document_double()
+        with Image.open(path) as source:
+            image = source.rotate(90, expand=True)
+        image.save(path)
+        result = extract_gatepass(path, self.directory / 'rotated')
+        self.assertEqual(result['gatepass'], '000123')
+        self.assertLess(result['seconds'], 11)
+
+    def test_expired_budget_returns_an_unresolved_reviewable_result(self):
+        result = extract_gatepass(self.document_double(), self.directory / 'expired', timeout=0)
+        self.assertEqual(result['gatepass'], '')
+        self.assertTrue(any('time limit' in warning for warning in result['warnings']))
+
     def test_conflicting_header_barcode_requires_manual_entry(self):
         result = extract_gatepass(self.document_double(barcode="999888"), self.directory / "result")
         self.assertIn("000123", result["ocr_candidates"])

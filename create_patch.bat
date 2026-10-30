@@ -6,25 +6,14 @@ echo   EFL NEXUS - Fast Differential Patch Generator
 echo ========================================================
 echo.
 
-:: Pin the EFL NEXUS bundle to Python 3.11 to maintain runtime compatibility
-set "PY_CMD=py -3.11"
-set "PYI_CMD=py -3.11 -m PyInstaller"
-
-:: Verify Python 3.11 is operational
-%PY_CMD% -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
-if %errorlevel% neq 0 (
-    python -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
-    if !errorlevel! equ 0 (
-        set "PY_CMD=python"
-        set "PYI_CMD=pyinstaller"
-    ) else (
-        echo [ERROR] Python 3.11 is required but was not found!
-        echo         Please ensure Python 3.11 is installed.
-        pause
-        exit /b 1
-    )
+:: Both release paths use the same isolated interpreter, dependencies and OCR preparation.
+call "%~dp0prepare_build.bat"
+if errorlevel 1 (
+    echo [ERROR] Build preparation failed. No release package was created.
+    pause
+    exit /b 1
 )
-echo   [Environment] Using Python 3.11 (!PY_CMD!)
+echo   [Environment] Using isolated Python 3.12: !PY_CMD!
 
 :: Read current version and build number
 if not exist "version.txt" (
@@ -50,14 +39,21 @@ echo Current Build   : %BUILD%
 echo.
 
 :: Determine target build number (from argument or prompt)
+set "TARGET_BUILD="
 if not "%~1"=="" (
-    set TARGET_BUILD=%~1
+    set "TARGET_BUILD=%~1"
 ) else (
     set /a NEXT_BUILD=%BUILD%+1
     set /p TARGET_BUILD="Enter build number for this patch [default: !NEXT_BUILD!]: "
     if "!TARGET_BUILD!"=="" set TARGET_BUILD=!NEXT_BUILD!
 )
 
+%PY_CMD% -c "import os,sys; value=os.environ['TARGET_BUILD']; previous=os.environ['BUILD']; sys.exit(0 if value.isascii() and value.isdigit() and int(value)>int(previous) else 1)"
+if errorlevel 1 (
+    echo [ERROR] Patch build number must be a whole number greater than !BUILD!.
+    pause
+    exit /b 1
+)
 > "build.txt" echo(!TARGET_BUILD!
 echo.
 echo ========================================================
@@ -65,27 +61,9 @@ echo Building Patch for EFL_NEXUS v%VER% (Build !TARGET_BUILD!)
 echo ========================================================
 echo.
 
-if not exist "Korber_AuditShip\KORBER AuditShip.exe" (
-    echo [ERROR] Korber_AuditShip\KORBER AuditShip.exe not found!
-    pause
-    exit /b 1
-)
-if not exist "Korber_AuditShip\_internal\python314.dll" (
-    echo [ERROR] Korber_AuditShip runtime folder is incomplete!
-    pause
-    exit /b 1
-)
-
-%PY_CMD% patch_auditship_credentials.py
-if %errorlevel% neq 0 (
-    echo [ERROR] Could not install the AuditShip credential bridge.
-    pause
-    exit /b %errorlevel%
-)
-
 :: Step 1: Compile directory build
 echo [1/4] Compiling directory-mode EFL_NEXUS with PyInstaller...
-%PYI_CMD% main_app.py --name=EFL_NEXUS --noconsole --noconfirm --onedir --icon=icon_2.ico --collect-all=selenium --collect-all=webdriver_manager --collect-all=webview --collect-all=pythonnet --collect-all=clr_loader --collect-all=PIL --collect-all=openpyxl --collect-all=customtkinter --collect-all=gspread --collect-all=oauth2client --hidden-import=pandas --hidden-import=openpyxl --hidden-import=openpyxl.styles --hidden-import=requests --hidden-import=dotenv --hidden-import=korber_tool --hidden-import=reconciliation_tool --hidden-import=korber_login_bot --hidden-import=outlook_email_gui --hidden-import=KPI --hidden-import=kpi_profile --hidden-import=reconciliation_queue --hidden-import=website_data_grabber --hidden-import=patch_auditship_credentials --hidden-import=gspread --hidden-import=oauth2client --hidden-import=oauth2client.service_account --hidden-import=updater --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --hidden-import=win32api --hidden-import=win32cred --hidden-import=winreg --hidden-import=customtkinter --hidden-import=queue --hidden-import=hashlib --hidden-import=calendar --add-data "version.txt;." --add-data "build.txt;." --add-data "icon_2.ico;." --add-data "icon.ico;." --add-data "aurora_bg.png;." --add-data "credentials.json;." --add-data "efl_users.json;." --add-data "templates.xlsx;." --add-data "variance_templates.xlsx;." --add-data "assets;assets"
+%PYI_CMD% EFL_NEXUS.spec --noconfirm --clean
 if %errorlevel% neq 0 (
     echo [ERROR] PyInstaller compilation failed!
     pause
@@ -95,9 +73,11 @@ if %errorlevel% neq 0 (
 :: Step 2: Build updater companion if needed
 echo.
 echo [2/4] Compiling companion updater.exe into dist\EFL_NEXUS...
-%PYI_CMD% updater.py --name=updater --noconsole --noconfirm --onefile --distpath=dist\EFL_NEXUS --icon=icon_2.ico --hidden-import=requests --add-data "icon_2.ico;." --add-data "icon.ico;."
+%PYI_CMD% --specpath build\generated-specs updater.py --name=updater --noconsole --noconfirm --onefile --distpath=dist\EFL_NEXUS --icon=icon_2.ico --hidden-import=requests --add-data "icon_2.ico;." --add-data "icon.ico;."
 if %errorlevel% neq 0 (
-    echo [WARNING] Failed to build updater.exe (skipping)
+    echo [ERROR] Failed to build the required updater.exe
+    pause
+    exit /b 1
 )
 
 :: Step 3: Sync latest assets, templates and AuditShip runtime
@@ -120,6 +100,13 @@ if exist "dist\EFL_NEXUS\.load_reconciliation_tool_settings.json" del /f /q "dis
 robocopy "Korber_AuditShip" "dist\EFL_NEXUS\Korber_AuditShip" /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS
 if errorlevel 8 (
     echo [ERROR] Failed to include Korber AuditShip in the patch build.
+    pause
+    exit /b 1
+)
+
+%PY_CMD% build_release.py verify --directory dist\EFL_NEXUS
+if errorlevel 1 (
+    echo [ERROR] Distribution verification failed. Packaging stopped.
     pause
     exit /b 1
 )

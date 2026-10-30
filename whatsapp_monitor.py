@@ -16,10 +16,14 @@ import queue
 from whatsapp_gdn import GDNInboxStore, content_fingerprint, parse_gdn_message
 
 
-# Read rendered incoming text only. No internal WhatsApp APIs, sends, or clicks.
+# Capture rendered incoming requests only; no internal WhatsApp APIs or sends.
+# The separate DONE resolver follows quote links using rendered page controls.
 # Bind the verified header to one exact, unambiguous rendered sidebar name.
 # The signed-in page exposes no group JID; this limitation is user-approved.
-READ_CONVERSATION_JS = r"""
+from whatsapp_media import MEDIA_ADAPTER_JS
+
+
+READ_CONVERSATION_JS = MEDIA_ADAPTER_JS + r"""
 if (location.origin !== 'https://web.whatsapp.com')
     return {error: 'Only WhatsApp Web can be monitored.', state: 'Unsupported page'};
 if (!navigator.onLine) return {error: 'Waiting for the network.', state: 'Offline'};
@@ -45,7 +49,9 @@ const groupKey = 'name:' + name;
 const byGroup = window.__nexusGdnIncomingAuthors || (window.__nexusGdnIncomingAuthors = new Map());
 if (!byGroup.has(groupKey)) byGroup.set(groupKey, new Set());
 const incomingAuthors = byGroup.get(groupKey);
-const messageRows = [...main.querySelectorAll('[data-id][data-testid^="conv-msg-"]')];
+const messageRows = [...main.querySelectorAll(nexusMedia.rows)];
+if(!messageRows.length && main.querySelector(nexusMedia.thumbnail))
+    return {error:'Photo message markup is unsupported. Reconnect or reopen the group.',state:'Unsupported markup'};
 const isQuote = el => !!el.closest('[data-testid="quoted-message"]');
 const metadata = row => [...row.querySelectorAll('[data-pre-plain-text]')].find(el => !isQuote(el));
 const authorKey = row => {
@@ -69,13 +75,20 @@ const messages = [];
 const unclassified = [];
 const photos = [];
 const unclassifiedPhotos = [];
+const replies = [];
+const messageTime = row => {
+    const value=metadata(row)?.getAttribute('data-pre-plain-text') || '';
+    const stamp=value.match(/^\[([^\]]+)\]/);
+    return stamp ? stamp[1] : '';
+};
 for (const row of messageRows) {
     const texts = [...row.querySelectorAll('[data-pre-plain-text] .selectable-text')].filter(el => !isQuote(el));
     const roots = texts.filter(el => !texts.some(other => other !== el && other.contains(el)));
     const text = roots.map(el => el.innerText).join('\n').trim();
-    const images = [...row.querySelectorAll('[data-testid="image-thumb"]')]
-        .filter(el => !isQuote(el));
-    const message = {id: row.getAttribute('data-id'), text};
+    const images = nexusPhotoThumbs(row);
+    const message = {id: row.getAttribute('data-id'), text, message_time:messageTime(row)};
+    if (text.toUpperCase()==='DONE' && row.querySelector('[data-testid="quoted-message"]'))
+        replies.push({...message,reply_to:null});
     const incomingTail = row.querySelector('[data-testid="tail-in"]');
     const outgoingTail = row.querySelector('[data-testid="tail-out"]');
     const outgoing = outgoingTail && !isQuote(outgoingTail);
@@ -84,9 +97,149 @@ for (const row of messageRows) {
         if (incoming) messages.push(message);
         else unclassified.push(message);
     }
-    if (!outgoing) images.forEach((img,index) => (incoming ? photos : unclassifiedPhotos).push({message_id:message.id,index}));
+    if (!outgoing) images.forEach((img,index) => (incoming ? photos : unclassifiedPhotos).push({message_id:message.id,index,message_time:message.message_time}));
 }
-return {group_id: groupKey, name, identity_method: 'exact_name', messages, unclassified, photos, unclassifiedPhotos};
+// Observe messages that can be virtualized out of the DOM between Python polls.
+// Retain lightweight photo metadata, never image bytes or detached message trees.
+const panel=main.querySelector('[data-testid="conversation-panel-messages"]');
+let observer=window.__nexusGrnPhotoObserver;
+if(observer && (observer.panel!==panel || observer.group!==groupKey)) {
+    observer.watcher.disconnect(); delete window.__nexusGrnPhotoObserver; observer=null;
+}
+const visible_photos=[...photos,...unclassifiedPhotos].map(p=>p.message_id);
+if(typeof MutationObserver!=='undefined' && !observer) {
+    observer={panel,group:groupKey,pending:new Map(),sequence:0,overflow:false};
+    observer.watcher=new MutationObserver(records=>{
+        if(document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]')?.textContent.trim()!==name) return;
+        const changed=new Set();
+        for(const record of records) {
+            const target=record.target?.closest?.(nexusMedia.rows);
+            if(target) changed.add(target);
+            for(const node of record.addedNodes || []) {
+                const row=node.closest?.(nexusMedia.rows);
+                if(row) changed.add(row);
+                for(const child of node.querySelectorAll?.(nexusMedia.rows) || []) changed.add(child);
+            }
+        }
+        for(const row of changed) {
+            const tail=row.querySelector('[data-testid="tail-out"]');
+            if(tail && !isQuote(tail)) continue;
+            const incoming=row.querySelector('[data-testid="tail-in"]');
+            const author=authorKey(row);
+            if(incoming && !isQuote(incoming) && author) incomingAuthors.add(author);
+            const verified=!!((incoming && !isQuote(incoming)) || incomingAuthors.has(author));
+            nexusPhotoThumbs(row).forEach((img,index)=>{
+                const message_id=row.getAttribute('data-id');
+                if(!message_id) return;
+                const key=message_id+':'+index;
+                observer.pending.set(key,{message_id,index,message_time:messageTime(row),verified,observation:++observer.sequence});
+                if(observer.pending.size>2000) {observer.pending.delete(observer.pending.keys().next().value);observer.overflow=true;}
+            });
+        }
+    });
+    observer.watcher.observe(panel,{childList:true,subtree:true,attributes:true,attributeFilter:['data-pre-plain-text','data-testid']});
+    window.__nexusGrnPhotoObserver=observer;
+}
+if(observer) {
+    const known=new Set([...photos,...unclassifiedPhotos].map(p=>p.message_id+':'+p.index));
+    for(const [key,photo] of observer.pending) {
+        if(!known.has(key)) (photo.verified?photos:unclassifiedPhotos).push(photo);
+    }
+}
+const photo_notice=observer?.overflow?'Photo observation buffer filled. Compare the group and use Scan GRN for missing loaded messages.':'';
+const photo_observations=observer?[...observer.pending].map(([key,photo])=>[key,photo.observation]):[];
+return {group_id: groupKey, name, identity_method: 'exact_name', messages, unclassified, photos, unclassifiedPhotos, replies, visible_photos, photo_notice, photo_observations};
+"""
+
+ACK_PHOTOS_JS = r"""
+const observer=window.__nexusGrnPhotoObserver;
+if(observer && observer.group===snapshot.group_id) {
+    for(const [key,token] of snapshot.photo_observations || []) {
+        if(observer.pending.get(key)?.observation===token) observer.pending.delete(key);
+    }
+    observer.overflow=false;
+}
+"""
+
+
+def photo_ack_script(snapshot):
+    acknowledged = {key: snapshot.get(key) for key in ('group_id', 'photo_observations')}
+    return '(() => {const snapshot=' + json.dumps(acknowledged) + ';' + ACK_PHOTOS_JS + '})()'
+
+
+# In the verified WebView2 page quotes expose no message ID. Following a quote
+# starts a three-keyframe background highlight on the original message row.
+# Resolve that row's data-id, never the quote's text, author or screen position.
+RESOLVE_DONE_JS = r"""
+if (snapshot.error) return snapshot;
+const caches=window.__nexusDoneLinks || (window.__nexusDoneLinks=new Map());
+if(!caches.has(snapshot.group_id)) caches.set(snapshot.group_id,new Map());
+const cache=caches.get(snapshot.group_id), now=Date.now();
+const rowFor=id=>[...document.querySelectorAll('#main [data-id][data-testid^="conv-msg-"]')]
+    .find(r=>r.getAttribute('data-id')===id);
+const finish=s=>{
+    s.replies=(s.replies||[]).map(r=>({...r,reply_to:cache.get(r.id)?.target || null}));
+    s.unresolved_done=s.replies.filter(r=>!r.reply_to).map(r=>r.id);
+    return s;
+};
+let owner=window.__nexusDoneNavigation;
+if(owner){
+    if(owner.group!==snapshot.group_id){owner.events.abort();delete window.__nexusDoneNavigation;return finish(snapshot);}
+    const targets=new Set();
+    if(!owner.interrupted) for(const animation of document.getAnimations()){
+        if(owner.before.has(animation)) continue;
+        const frames=animation.effect?.getKeyframes() || [];
+        if(frames.length!==3 || frames[0].offset!==0 || frames[1].offset!==0.5 || frames[2].offset!==1 ||
+           !frames.every(f=>typeof f.backgroundColor==='string') ||
+           frames[0].backgroundColor!==frames[2].backgroundColor || frames[0].backgroundColor===frames[1].backgroundColor) continue;
+        const target=animation.effect.target?.closest('#main [data-id][data-testid^="conv-msg-"]');
+        const id=target?.getAttribute('data-id');
+        if(id && id!==owner.reply) targets.add(id);
+    }
+    if(targets.size!==1 && !owner.interrupted && now-owner.started<2000)
+        return {...finish(owner.snapshot),reply_scan_pending:true};
+    const original=targets.size===1 && !owner.interrupted ? [...targets][0] : null;
+    cache.set(owner.reply,{target:original,retry:now+30000});
+    const saved=owner.snapshot;
+    if(original){
+        const row=rowFor(original), textNodes=[...row.querySelectorAll('[data-pre-plain-text] .selectable-text')]
+            .filter(e=>!e.closest('[data-testid="quoted-message"]'));
+        const roots=textNodes.filter(e=>!textNodes.some(other=>other!==e && other.contains(e)));
+        const meta=[...row.querySelectorAll('[data-pre-plain-text]')].find(e=>!e.closest('[data-testid="quoted-message"]'));
+        const stamp=(meta?.getAttribute('data-pre-plain-text') || '').match(/^\[([^\]]+)\]/);
+        saved.observed_originals=[{id:original,text:roots.map(e=>e.innerText).join('\n').trim(),message_time:stamp?.[1] || ''}];
+    }
+    owner.events.abort();
+    if(!owner.interrupted){
+        const anchor=rowFor(owner.anchor);
+        if(anchor) anchor.scrollIntoView({block:'end',behavior:'instant'});
+        else if(owner.scroller?.isConnected) owner.scroller.scrollTop=owner.scrollTop;
+    }
+    delete window.__nexusDoneNavigation;
+    finish(saved);
+    if(saved.replies.some(r=>!r.reply_to && (!cache.has(r.id) || cache.get(r.id).retry<=now))) saved.reply_scan_pending=true;
+    return saved;
+}
+finish(snapshot);
+const pending=snapshot.replies.find(r=>!r.reply_to && (!cache.has(r.id) || cache.get(r.id).retry<=now));
+if(!pending) return snapshot;
+if(window.__nexusGrnOriginal || document.querySelector('[data-testid="media-viewer-modal"]'))
+    return {...snapshot,reply_scan_pending:true};
+const row=rowFor(pending.id), button=row?.querySelector('[data-testid="quoted-message"] [aria-label="Quoted message"]');
+if(!button){cache.set(pending.id,{target:null,retry:now+30000});return snapshot;}
+let scroller=row.parentElement;
+while(scroller && !(scroller.scrollHeight>scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller=scroller.parentElement;
+owner={group:snapshot.group_id,reply:pending.id,started:now,snapshot,
+    before:new Set(document.getAnimations()),
+    scroller,scrollTop:scroller?.scrollTop,events:new AbortController(),interrupted:false};
+// Use the final rendered row as a viewport anchor; it is not reply evidence.
+owner.anchor=[...document.querySelectorAll('#main [data-id][data-testid^="conv-msg-"]')].at(-1)?.getAttribute('data-id');
+window.__nexusDoneNavigation=owner;
+const interrupt=e=>{if(e.isTrusted) owner.interrupted=true;};
+document.addEventListener('pointerdown',interrupt,{capture:true,signal:owner.events.signal});
+document.addEventListener('keydown',interrupt,{capture:true,signal:owner.events.signal});
+button.click();
+return {...snapshot,reply_scan_pending:true};
 """
 
 
@@ -125,8 +278,16 @@ class CaptureSession:
         self.seen.add(self.key(message))
 
 
-def read_script():
-    return "(() => {\n" + READ_CONVERSATION_JS + "\n})()"
+def read_script(expected_group=None, known_done=None):
+    guard = ("if(snapshot.group_id!==" + json.dumps(expected_group) + ") return snapshot;\n") if expected_group else ""
+    remembered = ""
+    if known_done:
+        remembered = ("const remembered=" + json.dumps(known_done) + ";"
+            "const savedLinks=window.__nexusDoneLinks || (window.__nexusDoneLinks=new Map());"
+            "if(!savedLinks.has(snapshot.group_id)) savedLinks.set(snapshot.group_id,new Map());"
+            "for(const [reply,target] of Object.entries(remembered[snapshot.group_id] || {}))"
+            "savedLinks.get(snapshot.group_id).set(reply,{target,retry:Infinity});\n")
+    return "(() => {const snapshot=(()=>{\n" + READ_CONVERSATION_JS + "\n})();\nif(snapshot.error) return snapshot;\n" + guard + remembered + RESOLVE_DONE_JS + "\n})()"
 
 
 def restore_group_script(name):
@@ -162,6 +323,16 @@ PROBE_STRUCTURE_JS = r"""(() => {
     const incoming = [...document.querySelectorAll('#main .message-in')];
     return {
         origin: location.origin, main: !!main, data_rows: rows.length,
+        done_links: [...(window.__nexusDoneLinks?.get('name:'+main?.querySelector('[data-testid="conversation-info-header-chat-title-name"]')?.textContent.trim()) || new Map())]
+            .map(([reply,info])=>({reply,target:info.target})),
+        done_scan_pending: !!window.__nexusDoneNavigation,
+        quoted_structure: rows.filter(r=>r.querySelector('[data-testid="quoted-message"]')).slice(-12).map(r=>({
+            id:r.getAttribute('data-id'),
+            done:[...r.querySelectorAll('[data-pre-plain-text] .selectable-text')]
+                .filter(e=>!e.closest('[data-testid="quoted-message"]')).map(e=>e.innerText).join('\n').trim().toUpperCase()==='DONE',
+            outgoing:!!r.querySelector('[data-testid="tail-out"]'),
+            quoted_photo:!!r.querySelector('[data-testid="quoted-message"] [data-testid="image-thumb"]')
+        })),
         mediaRows: rows.filter(r => r.querySelector('[data-testid="media-url-provider"]')).map(r => ({
             testid: r.getAttribute('data-testid'),
             metadata: !!r.querySelector('[data-pre-plain-text]'),
@@ -273,7 +444,7 @@ class CaptureEngine:
         from whatsapp_grn import GRNInboxStore
         photos = GRNInboxStore(self.store.path)
         try:
-            photos.discover(snapshot, baseline=not import_visible, import_visible=import_visible)
+            photos.discover(snapshot, baseline=not import_visible, import_visible=import_visible, recent_only=True)
             photos.set_settings(grn_capture_initialized=snapshot["group_id"])
         finally:
             photos.close()
@@ -292,6 +463,10 @@ class CaptureEngine:
         group = self.store.setting("group")
         if not group or snapshot.get("group_id") != group["id"]:
             raise ValueError("Group selection required: the open chat does not match the saved group name.")
+        self.store.observe_messages(snapshot)
+        if snapshot.get("reply_scan_pending"):
+            self.report("Monitoring", "Checking DONE reply links...")
+            return
         messages = snapshot["messages"]
         unknown_history = self.store.setting("unclassified_seen", [])
         known_unknown = set(unknown_history)
@@ -328,7 +503,8 @@ class CaptureEngine:
         for message in self.session.capture(snapshot):
             # Includes non-GDN text: acknowledge only after the classification /
             # durable insert succeeds. Failure leaves the message retryable.
-            self.store.add(message["text"], group["name"], message["id"])
+            self.store.add(message["text"], group["name"], message["id"],
+                           group_id=group["id"], message_time=message.get("message_time", ""))
             self.session.acknowledge(message)
         if messages:
             last = messages[-1]
@@ -356,13 +532,18 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
 
     def worker():
         store = GDNInboxStore(db_path)
-        from whatsapp_grn import GRNInboxStore, GRNExtractionWorker, photo_read_script
+        from whatsapp_grn import GRNInboxStore, GRNExtractionWorker, photo_read_script, grn_photo_is_recent
+        from grn_cloud_ocr import GRNCloudWorker
         photos = GRNInboxStore(db_path)
         extraction_worker = GRNExtractionWorker(db_path, stopping)
         extraction_worker.thread.start()
+        cloud_worker = GRNCloudWorker(db_path, stopping)
+        cloud_worker.thread.start()
         photo_results = queue.Queue()
         photo_inflight = {}
+        photo_owner_id = None
         photo_wake = threading.Event()
+        scan_requested = False
 
         def photo_done(source_id, token, result):
             photo_results.put((source_id, token, result))
@@ -401,6 +582,9 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                     elif action == "retry_ocr" and not extraction_worker.thread.is_alive():
                         extraction_worker = GRNExtractionWorker(db_path, stopping)
                         extraction_worker.thread.start()
+                    elif action == 'retry_cloud' and not cloud_worker.thread.is_alive():
+                        cloud_worker = GRNCloudWorker(db_path, stopping)
+                        cloud_worker.thread.start()
                     elif action == "acknowledge_gap":
                         store.set_settings(capture_gap=False)
                     elif action == "reload":
@@ -410,21 +594,25 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                     elif action == "probe" and loaded.is_set():
                         store.set_settings(last_probe=window.evaluate_js(PROBE_STRUCTURE_JS))
                     elif action == "import_photos" and loaded.is_set():
-                        current = window.evaluate_js(read_script())
+                        current = window.evaluate_js(read_script(store.setting("group", {}).get("id"), store.known_done_replies()))
                         if isinstance(current, dict) and current.get("group_id") == store.setting("group", {}).get("id"):
-                            photos.discover(current, import_visible=True)
-                            photos.set_settings(grn_capture_initialized=current["group_id"])
+                            if photos.default_warehouse(current["group_id"]):
+                                scan_requested = True
+                            else:
+                                store.set_settings(grn_capture_notice="Choose and save the default GRN warehouse before scanning photos.")
                         else:
                             store.set_settings(grn_capture_notice="Return to the selected group before importing photos.")
                     elif action == "select":
                         pending_selection = payload
                         selection_error = None
                 if pending_selection is not None and loaded.is_set() and not stopping.is_set():
-                    try:
-                        engine.select(window.evaluate_js(read_script()), pending_selection.get("import_visible", False))
-                    except ValueError as exc:
-                        selection_error = str(exc)
-                    pending_selection = None
+                    selection_snapshot = window.evaluate_js(read_script(known_done=store.known_done_replies()))
+                    if not isinstance(selection_snapshot, dict) or not selection_snapshot.get("reply_scan_pending"):
+                        try:
+                            engine.select(selection_snapshot, pending_selection.get("import_visible", False))
+                        except ValueError as exc:
+                            selection_error = str(exc)
+                        pending_selection = None
                 if stopping.is_set():
                     break
                 while not photo_results.empty():
@@ -441,11 +629,14 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                             photos.save_image(source_id, result["data"])
                     except (OSError, ValueError, sqlite3.Error) as exc:
                         photos.capture_failed(source_id, str(exc))
+                    if not isinstance(result, dict) or not result.get('waiting'):
+                        photo_owner_id = None
                     photo_inflight.pop(source_id, None)
                 for source_id, started in tuple(photo_inflight.items()):
                     if time.monotonic() - started > 15:
                         photos.capture_failed(source_id, "Photo retrieval timed out. Capture will retry.")
                         photo_inflight.pop(source_id, None)
+                        photo_owner_id = None
                 snapshot = None
                 if not loaded.is_set():
                     engine.report("Starting", "Loading WhatsApp Web...")
@@ -456,7 +647,7 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                         engine.report("Paused" if store.setting("group") else "Setup required",
                                       "Open the Browser tab, sign in, and select the group.")
                 else:
-                    snapshot = window.evaluate_js(read_script())
+                    snapshot = window.evaluate_js(read_script(store.setting("group", {}).get("id"), store.known_done_replies()))
                     if not isinstance(snapshot, dict):
                         engine.recovering = True
                         engine.report("Reconnecting", "Waiting for a readable WhatsApp page.")
@@ -477,24 +668,52 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                             engine.accept(snapshot)
                             # Baseline existing photos on upgrade. Importing history is explicit.
                             initial = photos.setting("grn_capture_initialized") != snapshot["group_id"]
-                            photos.discover(snapshot, baseline=initial)
-                            if initial:
-                                photos.set_settings(grn_capture_initialized=snapshot["group_id"])
-                            notice = "Some photo senders could not be verified as incoming. Check the group for missing photos." if snapshot.get("unclassifiedPhotos") else ""
+                            if not snapshot.get("reply_scan_pending"):
+                                recency = photos.discover(snapshot, baseline=initial, recent_only=True)
+                                window.evaluate_js(photo_ack_script(snapshot))
+                                if initial:
+                                    photos.set_settings(grn_capture_initialized=snapshot["group_id"])
+                            notice = snapshot.get('photo_notice', '') or ("Some photo senders could not be verified as incoming. Check the group for missing photos." if snapshot.get("unclassifiedPhotos") else "")
+                            if not snapshot.get('reply_scan_pending') and recency['unknown_time']:
+                                notice = (notice + ' ' if notice else '') + f"Skipped {recency['unknown_time']} photo(s): received time unavailable or unsupported. Only the last hour is scanned."
                             if store.setting("grn_capture_notice", "") != notice:
                                 store.set_settings(grn_capture_notice=notice)
-                            window.evaluate_js(FOLLOW_LATEST_JS)
+                            if not snapshot.get("reply_scan_pending"):
+                                window.evaluate_js(FOLLOW_LATEST_JS)
                         except sqlite3.Error:
                             engine.report("Storage error", "Capture is waiting for local inbox storage; requests will be retried.")
                 # Explicit imports can also complete while monitoring is paused for review.
-                if loaded.is_set() and len(photo_inflight) < 4 and store.setting("group"):
+                if loaded.is_set() and len(photo_inflight) < 1 and store.setting("group"):
                     if snapshot is None:
-                        snapshot = window.evaluate_js(read_script())
+                        snapshot = window.evaluate_js(read_script(store.setting("group", {}).get("id"), store.known_done_replies()))
+                    valid = (isinstance(snapshot, dict) and not snapshot.get("error")
+                             and snapshot.get("group_id") == store.setting("group", {}).get("id"))
+                    if valid:
+                        photos.observe_messages(snapshot)
+                        if scan_requested and not snapshot.get("reply_scan_pending"):
+                            recency = photos.discover(snapshot, import_visible=True, recent_only=True)
+                            window.evaluate_js(photo_ack_script(snapshot))
+                            photos.set_settings(grn_capture_initialized=snapshot["group_id"],
+                                                grn_scan_status=f"Scan complete: {recency['eligible']} photo(s) within the last hour; {recency['outside_window']} outside the window and {recency['unknown_time']} with unverified times skipped. Cleared and DONE items stay hidden.")
+                            scan_requested = False
                     visible_ids = {p['message_id'] for key in ('photos', 'unclassifiedPhotos')
-                                   for p in snapshot.get(key, [])} if isinstance(snapshot, dict) else set()
+                                   for p in snapshot.get(key, [])} if valid and not snapshot.get("reply_scan_pending") else set()
+                    if valid and 'visible_photos' in snapshot:
+                        visible_ids.intersection_update(snapshot['visible_photos'])
+                    if photo_owner_id is not None:
+                        active = photos.db.execute("SELECT group_id,message_id,message_time,hidden_reason,capture_refresh,document_id FROM grn_sources WHERE id=?", (photo_owner_id,)).fetchone()
+                        if not active or active['hidden_reason'] or active['group_id'] != store.setting('group')['id'] or (active['document_id'] and not active['capture_refresh']):
+                            photo_owner_id = None
+                        elif not grn_photo_is_recent(active['message_time']):
+                            photos.capture_waiting(photo_owner_id, 'Outside the last-hour scan window; capture skipped.')
+                            photo_owner_id = None
+                        elif valid and not snapshot.get('reply_scan_pending') and active['message_id'] not in visible_ids:
+                            photos.capture_waiting(photo_owner_id, 'Photo message is outside the rendered history. Open its message to complete capture.')
+                            photo_owner_id = None
                     pending = photos.pending_capture(store.setting("group")["id"],
-                        limit=4-len(photo_inflight), exclude_ids=photo_inflight, visible_ids=visible_ids)
+                        limit=1-len(photo_inflight), exclude_ids=photo_inflight, visible_ids=visible_ids, owner_id=photo_owner_id, recent_only=True)
                     for source in pending:
+                        photo_owner_id = source['id']
                         token = time.monotonic()
                         photo_inflight[source["id"]] = token
                         try:
@@ -503,6 +722,7 @@ def run_whatsapp_browser(db_path, run_id, parent_pid):
                         except Exception as exc:
                             photos.capture_failed(source["id"], f"Photo retrieval failed ({type(exc).__name__}). Retry capture.")
                             photo_inflight.pop(source["id"], None)
+                            photo_owner_id = None
                 photo_wake.wait(.5)
                 photo_wake.clear()
         except Exception as exc:

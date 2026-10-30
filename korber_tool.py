@@ -126,6 +126,11 @@ class KorberApp:
         self._current_ctx = None        # dict of values steps hand to later steps (gdn_number, etc.)
         self._current_doc_type = None
         self._failed_step_index = None  # index into _current_steps of the step that last failed
+        self._flow_active = False
+        self._flow_on_complete = None
+        self._flow_request = None
+        self._flow_stop_requested = False
+        self._flow_error = ""
 
         if standalone:
             root.title("Körber Automation")
@@ -430,12 +435,19 @@ class KorberApp:
 
         if not hasattr(root, "_whatsapp_gdn_lanes"):
             root._whatsapp_gdn_lanes = {}
-        lane_label = {"lane_a": "Lane A", "lane_b": "Lane B"}.get(profile_name, profile_name.replace("_", " ").title())
+        lane_label = {"lane_a": "Lane A", "lane_b": "Lane B",
+                      "whatsapp_lane_1": "WhatsApp Lane 1", "whatsapp_lane_2": "WhatsApp Lane 2"}.get(
+                          profile_name, profile_name.replace("_", " ").title())
         root._whatsapp_gdn_lanes[lane_label] = self
+
+        def unregister(event):
+            if event.widget is target and root._whatsapp_gdn_lanes.get(lane_label) is self:
+                del root._whatsapp_gdn_lanes[lane_label]
+        target.bind("<Destroy>", unregister, add="+")
 
     def open_whatsapp_inbox(self):
         from whatsapp_inbox import open_inbox
-        return open_inbox(self.root, self.root._whatsapp_gdn_lanes)
+        return open_inbox(self.root)
 
     def _start_progress(self):
         self.progress.start(12)
@@ -597,6 +609,7 @@ class KorberApp:
             return
 
         self.set_status("Terminating browser session...")
+        self._flow_stop_requested = True
 
         if self.driver is not None:
             try:
@@ -649,6 +662,7 @@ class KorberApp:
         for item in self.queue:
             if item["status"] in ("Queued", "Running"):
                 item["stop_requested"] = True
+        self._flow_stop_requested = True
 
         if self.driver is not None:
             try:
@@ -672,7 +686,9 @@ class KorberApp:
             "Automating GDN/GRN creation, one click at a time.",
         )
 
-    def run_flow(self, doc_type: str):
+    def run_flow(self, doc_type: str, on_complete=None):
+        if self._flow_active or self.queue_running:
+            return False
         if doc_type == "GDN":
             warehouse_id = self.warehouse_entry.get().strip()
             client_code = self.client_entry.get().strip()
@@ -690,7 +706,7 @@ class KorberApp:
 
             if not all([warehouse_id, client_code, gate_pass_number, delivery_location, seal_number]):
                 messagebox.showwarning("Missing info", "Please fill in all five GDN fields first.")
-                return
+                return False
         else:  # GRN uses its own separate fields
             warehouse_id = self.grn_warehouse_entry.get().strip()
             gate_pass_number = self.grn_gatepass_entry.get().strip()
@@ -698,22 +714,55 @@ class KorberApp:
 
             if not all([warehouse_id, gate_pass_number]):
                 messagebox.showwarning("Missing info", "Please fill in the GRN Warehouse ID and Gate Pass Number first.")
-                return
+                return False
 
         # Fresh run: no steps/context/failure to resume from yet.
         self._current_steps = None
         self._current_ctx = None
         self._failed_step_index = None
+        self._flow_active = True
+        self._flow_on_complete = on_complete
+        self._flow_stop_requested = False
+        self._flow_error = ""
+        self._flow_request = {"doc_type": doc_type, "warehouse_id": warehouse_id,
+                              "client_code": client_code, "gate_pass_number": gate_pass_number}
 
         self.gdn_btn.config(state=tk.DISABLED)
         self.grn_btn.config(state=tk.DISABLED)
+        self.run_queue_btn.config(state=tk.DISABLED)
         self._start_progress()
         self.set_status(f"Opening browser for {doc_type}...")
-        threading.Thread(
-            target=self._run_flow_worker,
-            args=(doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number),
-            daemon=True,
-        ).start()
+        try:
+            threading.Thread(
+                target=self._run_flow_worker,
+                args=(doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number),
+                daemon=True,
+            ).start()
+        except Exception as exc:
+            self._finish_flow(False, f"Could not start: {exc}")
+            raise
+        return True
+
+    def _finish_flow(self, completed, detail):
+        callback, self._flow_on_complete = self._flow_on_complete, None
+        persistence_error = None
+        try:
+            if callback:
+                callback(completed, detail)
+        except Exception as exc:
+            persistence_error = exc
+        finally:
+            self._flow_active = False
+            self._flow_request = None
+        try:
+            self._stop_progress()
+            self.gdn_btn.config(state=tk.NORMAL)
+            self.grn_btn.config(state=tk.NORMAL)
+            self.run_queue_btn.config(state=tk.NORMAL)
+            if persistence_error:
+                self.set_status(f"{detail}. Could not save inbox run state: {persistence_error}")
+        except tk.TclError:
+            pass  # The outcome is retained even if the view was closed.
 
     # ---------------------------------------------------------------------
     # Queue: create multiple GDNs/GRNs in one browser session, with a live
@@ -824,7 +873,7 @@ class KorberApp:
         self.root.update_idletasks()
 
     def run_queue(self):
-        if self.queue_running:
+        if self.queue_running or self._flow_active:
             return
         if not any(it["status"] == "Queued" for it in self.queue):
             messagebox.showinfo("Queue empty", "Add at least one GDN or GRN to the queue first.")
@@ -1176,6 +1225,8 @@ class KorberApp:
         eventually got resolved by a retry."""
         last_exc = None
         for attempt in range(retries + 1):
+            if self._flow_active and self._flow_stop_requested:
+                raise RuntimeError("Browser session stopped")
             if self.driver is not None:
                 wait_for_loading_to_disappear(self.driver)
             try:
@@ -1187,9 +1238,22 @@ class KorberApp:
                 if attempt < retries:
                     self.set_status(f"Slow response, retrying... (attempt {attempt + 2}/{retries + 1})")
                     time.sleep(delay)
-        
+        if last_exc is not None:
+            raise last_exc
 
     def _run_flow_worker(self, doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number):
+        try:
+            self._prepare_and_execute_flow(doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number)
+        except Exception as exc:
+            # Includes destroyed Tk views and errors while reporting a failure.
+            self._finish_flow(False, f"{doc_type} stopped before completion: {exc}")
+
+    def _prepare_and_execute_flow(self, doc_type, warehouse_id, client_code, gate_pass_number, delivery_location, seal_number):
+        # Each lane uses one Chrome profile. Release its previous session before
+        # opening another browser for an intentional repeat run.
+        if self.driver is not None:
+            self.driver.quit()
+            self.driver = None
         ctx = {}
         try:
             if doc_type == "GDN":
@@ -1202,6 +1266,10 @@ class KorberApp:
             # the background thread silently -- no popup, no browser, no
             # sign anything happened at all. Now it reports like any other
             # failure instead of failing invisibly.
+            self._flow_error = f"Failed ({doc_type}) while preparing steps: {e}"
+            if self._flow_stop_requested:
+                self._finish_flow(False, "Browser session stopped")
+                return
             self._stop_progress()
             self.set_status(f"Failed ({doc_type}) while preparing steps")
             self._report_error("preparing steps", e)
@@ -1217,6 +1285,9 @@ class KorberApp:
         that failed last time), reusing the same driver session and ctx
         so we don't have to log in and navigate all over again."""
         for i in range(start_index, len(steps)):
+            if self._flow_stop_requested:
+                self._finish_flow(False, "Browser session stopped")
+                return
             step = steps[i]
             name, status_text, func = step[0], step[1], step[2]
             step_retries = step[3] if len(step) > 3 else STEP_RETRIES
@@ -1224,21 +1295,27 @@ class KorberApp:
             try:
                 self._run_step_with_retry(func, retries=step_retries)
             except Exception as e:
+                if self._flow_stop_requested:
+                    self._finish_flow(False, "Browser session stopped")
+                    return
+                self._flow_error = f"Failed ({doc_type}) during {name}: {e}"
                 self._failed_step_index = i
                 self._stop_progress()
                 self.set_status(f"Failed ({doc_type}) during: {name}")
                 self._report_error(name, e)
                 return  # leave buttons disabled + driver open until user decides in the dialog
 
+        if self._flow_stop_requested:
+            self._finish_flow(False, "Browser session stopped")
+            return
         if doc_type == "GDN":
             gdn_number = ctx.get("gdn_number", "")
-            self.set_status(f"{doc_type} {gdn_number} completed and printed")
+            detail = f"{doc_type} {gdn_number} completed and printed"
         else:
-            self.set_status(f"{doc_type} created and printed")
+            detail = f"{doc_type} created and printed"
+        self.set_status(detail)
         self._failed_step_index = None
-        self._stop_progress()
-        self.gdn_btn.config(state=tk.NORMAL)
-        self.grn_btn.config(state=tk.NORMAL)
+        self._finish_flow(True, detail)
 
     def _resolve_quantity_discrepancy_after_create_grn(self):
         """Checks for a known 'Create GRN @ GatePass' system error (see
@@ -1354,6 +1431,7 @@ class KorberApp:
         )
 
     def _cancel_after_failure(self):
+        self._finish_flow(False, self._flow_error or "Cancelled after failure")
         self._current_steps = None
         self._current_ctx = None
         self._failed_step_index = None

@@ -6,14 +6,19 @@ from tkinter import ttk
 
 from PIL import Image, ImageOps, ImageTk
 
-from whatsapp_grn import GRNInboxStore, GRN_WAREHOUSES, fill_grn_request, validate_grn_fields
+from whatsapp_grn import GRNInboxStore, GRN_WAREHOUSES, fill_grn_request, validate_grn_fields, grn_photo_is_recent, grn_message_epoch
+from whatsapp_gdn import launch_gatepass, received_label, recover_gatepass_runs
+from grn_cloud_ocr import PENDING_STATES, cloud_settings, retry_cloud, usage_today
+from grn_ocr_settings import GRNOCRSettings
 
 
 class WhatsAppGRNInbox:
     def __init__(self, root, container, controller, lanes, ensure_lanes=None):
         self.root, self.controller, self.lanes, self.ensure_lanes = root, controller, lanes, ensure_lanes
         self.store = GRNInboxStore(controller.store.path)
+        recover_gatepass_runs(self.store, self.lanes, "GRN")
         self.selected_id = None
+        self._run_states = {}
         self.selected_source_id = None
         self.closed = False
         self.after_id = None
@@ -23,13 +28,16 @@ class WhatsAppGRNInbox:
         self.frame = ttk.Frame(container, padding=12)
         self.frame.pack(fill="both", expand=True)
         self.frame.bind("<Destroy>", self._destroyed, add="+")
-        self.status = tk.StringVar(value="Review the photo and number before filling a GRN form. Each GRN starts only when you click Create GRN.")
+        self.status = tk.StringVar(value="Review the photo and number before filling or running a GRN. Run Gatepass starts the selected lane's GRN flow.")
         self.capture_status = tk.StringVar()
         bar = ttk.Frame(self.frame)
         bar.pack(fill="x")
-        ttk.Button(bar, text="Import Visible Photos", command=self.import_visible).pack(side="left")
+        ttk.Button(bar, text="Scan GRN", command=self.import_visible).pack(side="left")
         ttk.Button(bar, text="Retry Capture", command=self.retry_capture).pack(side="left", padx=6)
-        ttk.Label(bar, text="For older photos: pause monitoring, scroll to the message, then import.").pack(side="left", padx=8)
+        ttk.Button(bar, text="Clear List", command=self.clear_list).pack(side="left")
+        ttk.Button(bar, text='OCR Settings', command=lambda: GRNOCRSettings(self.root, self.store)).pack(side='left', padx=6)
+        ttk.Button(bar, text='Retry Cloud', command=self.retry_cloud).pack(side='left')
+        ttk.Label(bar, text="Scans loaded GRN photos received within the last hour.").pack(side="left", padx=8)
         ttk.Label(self.frame, textvariable=self.capture_status, wraplength=1300, foreground="#b45309").pack(anchor="w", pady=6)
         panes = ttk.Panedwindow(self.frame, orient="horizontal")
         panes.pack(fill="both", expand=True)
@@ -37,11 +45,15 @@ class WhatsAppGRNInbox:
         panes.add(listing, weight=2)
         panes.add(original, weight=3)
         panes.add(details, weight=2)
-        self.tree = ttk.Treeview(listing, columns=("gatepass", "state"), show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(listing, columns=("gatepass", "state", "run_state", "received"), show="headings", selectmode="browse")
         self.tree.heading("gatepass", text="Gate Pass")
         self.tree.heading("state", text="Status")
         self.tree.column("gatepass", width=95, minwidth=70)
         self.tree.column("state", width=150, minwidth=100)
+        self.tree.heading("run_state", text="State")
+        self.tree.column("run_state", width=95, minwidth=80)
+        self.tree.heading("received", text="Received")
+        self.tree.column("received", width=195, minwidth=130)
         scroll = ttk.Scrollbar(listing, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -67,11 +79,13 @@ class WhatsAppGRNInbox:
         self.warnings = tk.StringVar(value="Select a document to review.")
         ttk.Label(details, textvariable=self.warnings, wraplength=370, foreground="#b45309").pack(fill="x", pady=8)
         ttk.Label(details, text="Target lane").pack(anchor="w")
-        self.lane = ttk.Combobox(details, values=list(lanes) or ["Lane A", "Lane B"], state="readonly")
+        self.lane = ttk.Combobox(details, values=list(lanes), state="readonly")
         self.lane.pack(fill="x", pady=(3, 10))
-        self.lane.current(0)
+        if lanes:
+            self.lane.current(0)
         ttk.Button(details, text="Save Review", command=self.save_review).pack(fill="x", pady=3)
         ttk.Button(details, text="Fill GRN Form", command=self.fill_form).pack(fill="x", pady=3)
+        ttk.Button(details, text="Run Gatepass", command=lambda: self.fill_form(start_run=True)).pack(fill="x", pady=3)
         ttk.Button(details, text="Retry Extraction", command=self.retry_extraction).pack(fill="x", pady=3)
         ttk.Label(self.frame, textvariable=self.status, wraplength=1400).pack(fill="x", pady=(10, 0))
         self.version = -1
@@ -98,7 +112,10 @@ class WhatsAppGRNInbox:
             group = self.store.setting("group", {})
             if not self.store.default_warehouse(group.get("id", "")):
                 notice = "Choose and save the default GRN warehouse above before importing photos."
-            self.capture_status.set("\n".join([notice] + [f"{e['source']}: {e['capture_error']}" for e in errors[:3]]).strip())
+            self.capture_status.set("\n".join(filter(None, [notice, self.store.setting('grn_scan_status', ''), self.store.setting("done_reply_notice", "")]
+                + [self.store.setting('grn_cloud_status', ''),
+                   f"Cloud OCR: {'enabled' if cloud_settings(self.store)['enabled'] else 'disabled'}; uploads today: {usage_today(self.store)} / {cloud_settings(self.store)['daily_limit'] or 'not set'}"]
+                + [f"{e['source']}: {e['capture_error']}" for e in errors[:3]])))
         except (sqlite3.Error, OSError) as exc:
             self.status.set(f"Could not refresh GRN inbox: {exc}")
         self.after_id = self.frame.after(250, self._poll)
@@ -112,15 +129,25 @@ class WhatsAppGRNInbox:
                 self.selected_id, self.selected_source_id = source[0], None
                 self.load_selected()
         rows = []
+        previous_states, self._run_states = self._run_states, {}
         for source in self.store.pending_entries():
             state = "Waiting for original photo" if source["incoming_verified"] else "Sender verification required"
             if source["capture_error"]:
-                state = "Waiting / retrying photo"
-            rows.append((f"source:{source['id']}", ("Incoming photo", state)))
+                state = source['capture_error']
+            if grn_message_epoch(source['message_time']) is None:
+                state = 'Received time unverified; not scanned'
+            elif not grn_photo_is_recent(source['message_time']):
+                state = 'Outside last hour; not scanned'
+            rows.append((f"source:{source['id']}", ("Incoming photo", state, "New", received_label(source))))
         for record in self.store.documents():
+            self._run_states[record["id"]] = record["run_state"]
             state = record["action"] if record["action"] != "New" else record["state"]
-            rows.append((str(record["id"]), (record["gatepass"] or "Unread", state)))
+            rows.append((str(record["id"]), (record["gatepass"] or "Unread", state, record["run_state"], received_label(record))))
         wanted = {key for key, _ in rows}
+        selection_key = str(self.selected_id) if self.selected_id is not None else (
+            f"source:{self.selected_source_id}" if self.selected_source_id is not None else None)
+        if selection_key is not None and selection_key not in wanted:
+            self.reset_selection()
         for key in self.tree.get_children():
             if key not in wanted:
                 self.tree.delete(key)
@@ -138,6 +165,32 @@ class WhatsAppGRNInbox:
             revision = (current["state"], current["image_path"], current["extraction"])
             if revision != self.selected_revision and not self.dirty:
                 self.load_selected()
+            state = current["run_state"]
+            if previous_states.get(selected) == "Running" and state != "Running":
+                self.status.set(f"GRN state: {state}. You can use Run Gatepass again.")
+
+    def reset_selection(self):
+        self.selected_id = self.selected_source_id = self.selected_revision = None
+        self.tree.selection_remove(*self.tree.selection())
+        self.loading = True
+        self.warehouse.set("")
+        self.gatepass.set("")
+        self.loading = False
+        self.dirty = False
+        self.confirmed.set(False)
+        for label in (self.original, self.crop):
+            label.configure(image="", text="Select a photo")
+            label.image = None
+        self.warnings.set("Select a document to review.")
+
+    def clear_list(self):
+        try:
+            count = self.store.clear_list()
+            self.reset_selection()
+            self.refresh()
+            self.status.set(f"Cleared {count} photos from this list. History and duplicate protection are retained.")
+        except sqlite3.Error as exc:
+            self.status.set(f"Could not clear the list: {exc}")
 
     def _selected(self, _=None):
         selection = self.tree.selection()
@@ -158,6 +211,9 @@ class WhatsAppGRNInbox:
                 label.image = None
             self.warnings.set(source["capture_error"] or ("Waiting for WhatsApp to load the original photo." if source["incoming_verified"] else "Sender is not verified as incoming. Keep the message and adjacent incoming messages visible."))
             self.status.set("Photo detected and saved in the inbox. Download and extraction are pending.")
+            if source and not grn_photo_is_recent(source['message_time']):
+                self.warnings.set('Only photos with a verified WhatsApp received time within the last hour are scanned.')
+                self.status.set('Photo skipped by the last-hour capture filter. Existing history is retained.')
         elif int(selection[0]) != self.selected_id:
             self.selected_id = int(selection[0])
             self.selected_source_id = None
@@ -177,7 +233,8 @@ class WhatsAppGRNInbox:
 
     def load_selected(self):
         record = self.store.document(self.selected_id)
-        if not record:
+        if not record or record["hidden_reason"]:
+            self.reset_selection()
             return
         self.loading = True
         self.warehouse.set(record["warehouse"])
@@ -194,6 +251,12 @@ class WhatsAppGRNInbox:
             warnings.append("Printed reading: " + ", ".join(readings["ocr_candidates"]))
         if readings.get("barcode_candidates"):
             warnings.append("Header barcode: " + ", ".join(readings["barcode_candidates"]))
+        if readings.get('azure_candidates'):
+            warnings.append('Azure reading: ' + ', '.join(readings['azure_candidates']))
+        if readings.get('ocr_space_candidates'):
+            warnings.append('OCR.space reading: ' + ', '.join(readings['ocr_space_candidates']))
+        if readings.get('recognition_source'):
+            warnings.insert(0, 'Reading source: ' + readings['recognition_source'])
         if any(other["id"] != record["id"] and record["gatepass"] and other["warehouse"] == record["warehouse"]
                and other["gatepass"] == record["gatepass"] for other in self.store.documents()):
             warnings.append("Another photo has this warehouse and gate pass. Compare the originals.")
@@ -211,11 +274,15 @@ class WhatsAppGRNInbox:
             self.status.set("Select a photo first.")
             return False
         record = self.store.document(self.selected_id)
-        if record["state"] == "Awaiting original photo":
-            self.status.set("Wait for original-photo capture before saving the review.")
+        if record is None or record["hidden_reason"]:
+            self.reset_selection()
+            self.status.set("This photo was cleared or marked DONE.")
             return False
-        if record["action"].startswith(("Filled:", "Filling:", "Transfer uncertain:", "Replaced")):
-            self.status.set("This document was transferred. Check its target lane before processing it again.")
+        if record["state"] in ('Awaiting original photo', *PENDING_STATES):
+            self.status.set("Wait for original-photo capture and cloud reading before saving the review.")
+            return False
+        if record["run_state"] == "Running" or record["action"].startswith("Replaced"):
+            self.status.set("This document is running or has been replaced. Select an idle active photo.")
             return False
         warehouse, gatepass = self._values()
         errors = validate_grn_fields(warehouse, gatepass)
@@ -228,41 +295,50 @@ class WhatsAppGRNInbox:
             self.refresh()
             self.status.set("Review saved. Fill GRN Form when ready.")
             return True
-        except sqlite3.Error as exc:
+        except (ValueError, sqlite3.Error) as exc:
             self.status.set(f"Review could not be saved: {exc}")
             return False
 
-    def fill_form(self):
+    def fill_form(self, start_run=False):
+        recover_gatepass_runs(self.store, self.lanes, "GRN")
         if not self.confirmed.get():
             self.status.set("Check the photo and warehouse, then tick the review confirmation.")
-            return
+            return False
         if not self.lanes and self.ensure_lanes:
             self.lanes = self.ensure_lanes()
             self.lane.configure(values=list(self.lanes))
             if self.lanes and not self.lane.get():
                 self.lane.current(0)
         try:
-            fill_grn_request(self.store, self.selected_id, *self._values(), self.lane.get(), self.lanes)
-        except (ValueError, OSError, sqlite3.Error, tk.TclError) as exc:
+            fill_grn_request(self.store, self.selected_id, *self._values(), self.lane.get(), self.lanes, allow_repeat=start_run)
+            if start_run:
+                launch_gatepass(self.store, self.selected_id, "GRN", self.lane.get(), self.lanes[self.lane.get()])
+        except (ValueError, RuntimeError, OSError, sqlite3.Error, tk.TclError) as exc:
+            self.refresh()
             self.status.set(str(exc))
-            return
+            return False
         self.dirty = False
         self.refresh()
-        self.status.set(f"Filled {self.lane.get()}. Open Korber Automation and click Create GRN when ready.")
+        self.status.set(f"GRN running in {self.lane.get()}. You can run it again after it finishes or stops."
+                        if start_run else f"Filled {self.lane.get()}. Open that lane tab and click Create GRN when ready.")
+        return True
 
     def import_visible(self):
         group = self.store.setting("group", {})
+        if not group:
+            self.status.set("Select a WhatsApp group before scanning GRNs.")
+            return
         if not self.store.default_warehouse(group.get("id", "")):
             self.status.set("Choose and save the default GRN warehouse above first.")
             return
         self.controller.start()
         self.store.command(self.controller.run_id, "import_photos")
-        self.status.set("Requested capture of visible incoming photos in the selected group.")
+        self.status.set("Scanning loaded incoming GRN photos received within the last hour. Older photos and unverified received times are skipped.")
 
     def retry_capture(self):
         try:
             if self.selected_id is not None:
-                self.store.refresh_photo(self.selected_id)
+                self.store.refresh_photo(self.selected_id, recent_only=True)
             self.store.retry()
         except (ValueError, sqlite3.Error) as exc:
             self.status.set(str(exc))
@@ -279,6 +355,19 @@ class WhatsAppGRNInbox:
             self.controller.start()
             self.store.command(self.controller.run_id, "retry_ocr")
             self.status.set("Extraction retry requested. Saved review corrections are preserved.")
+
+    def retry_cloud(self):
+        if self.selected_id is None:
+            self.status.set('Select an unreviewed photo with a previous cloud request.')
+            return
+        try:
+            retry_cloud(self.store, self.selected_id)
+            self.controller.start()
+            self.store.command(self.controller.run_id, 'retry_cloud')
+            self.refresh()
+            self.status.set('Cloud retry requested. OCR.space receives a new upload if no completed result is cached.')
+        except (ValueError, sqlite3.Error) as exc:
+            self.status.set(str(exc))
 
     def view_original(self):
         if self.selected_id is None:

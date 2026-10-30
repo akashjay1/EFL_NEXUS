@@ -23,7 +23,7 @@ tmp_ret = collect_all('zxingcpp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 # OpenCV and NumPy use their supplied PyInstaller hooks; collecting their test
 # suites as hidden imports unnecessarily pulls development modules into releases.
-hiddenimports += ['grn_ocr', 'whatsapp_grn', 'whatsapp_grn_inbox', 'cv2', 'numpy']
+hiddenimports += ['grn_ocr', 'grn_cloud_ocr', 'grn_ocr_settings', 'whatsapp_media', 'whatsapp_grn', 'whatsapp_grn_inbox', 'cv2', 'numpy']
 tmp_ret = collect_all('openpyxl')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('customtkinter')

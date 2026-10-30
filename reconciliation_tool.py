@@ -1875,17 +1875,12 @@ class ReconciliationApp:
         self.history_columns = []
         self.plan_columns = []
         
-        # Store original data for text-to-columns
-        self.history_original_data = None
-        self.plan_original_data = None
         self.history_df_loaded = None
         self.plan_df_loaded = None
         
-        # Store concatenate-columns configuration so it can be reapplied to
-        # the freshly re-read file when reconciliation actually runs.
-        # Lists so multiple concatenations (done one after another) are all replayed.
-        self.history_concat_configs = []
-        self.plan_concat_configs = []
+        # Replay splits and concatenations in the same order as the preview.
+        self.history_transform_configs = []
+        self.plan_transform_configs = []
         self.last_output_file = None
         self.last_report_job_id = None
         self.active_job_context = None
@@ -3060,7 +3055,7 @@ class ReconciliationApp:
                 messagebox.showerror("Error", f"Column '{column_name}' not found")
                 return
             
-            column_data = self.history_df_loaded[column_name].astype(str).tolist()
+            column_data = self.history_df_loaded[column_name].astype('string').fillna("").tolist()
             
             dialog = TextToColumnsDialog(
                 self.root,
@@ -3073,13 +3068,15 @@ class ReconciliationApp:
             
             if dialog.result is not None:
                 self.history_split_widths = dialog.widths
-                self.history_original_data = dialog.result
                 self.add_log(f"✅ History text-to-columns configured: {len(self.history_split_widths)} columns", "SUCCESS")
                 self.add_log(f"   Widths: {self.history_split_widths}", "INFO")
 
                 preview_df = self.apply_text_to_columns(
-                    self.history_df_loaded, column_name, self.history_original_data, "History"
+                    self.history_df_loaded, column_name, dialog.widths, "History"
                 )
+                self.history_transform_configs.append({
+                    'type': 'split', 'column': column_name, 'widths': list(dialog.widths)
+                })
                 self.history_df_loaded = preview_df
                 new_columns = preview_df.columns.tolist()
                 self.history_columns = new_columns
@@ -3112,7 +3109,7 @@ class ReconciliationApp:
                 messagebox.showerror("Error", f"Column '{column_name}' not found")
                 return
             
-            column_data = self.plan_df_loaded[column_name].astype(str).tolist()
+            column_data = self.plan_df_loaded[column_name].astype('string').fillna("").tolist()
             
             dialog = TextToColumnsDialog(
                 self.root,
@@ -3125,13 +3122,15 @@ class ReconciliationApp:
             
             if dialog.result is not None:
                 self.plan_split_widths = dialog.widths
-                self.plan_original_data = dialog.result
                 self.add_log(f"✅ Plan text-to-columns configured: {len(self.plan_split_widths)} columns", "SUCCESS")
                 self.add_log(f"   Widths: {self.plan_split_widths}", "INFO")
 
                 preview_df = self.apply_text_to_columns(
-                    self.plan_df_loaded, column_name, self.plan_original_data, "Plan"
+                    self.plan_df_loaded, column_name, dialog.widths, "Plan"
                 )
+                self.plan_transform_configs.append({
+                    'type': 'split', 'column': column_name, 'widths': list(dialog.widths)
+                })
                 self.plan_df_loaded = preview_df
                 new_columns = preview_df.columns.tolist()
                 self.plan_columns = new_columns
@@ -3196,11 +3195,13 @@ class ReconciliationApp:
             
             # Store the dataframe
             if combo_load_id == self.history_load_id_combo:
+                self.reset_column_transformations('history')
                 self.history_df_loaded = df
                 self.history_columns = columns
                 if split_combo:
                     split_combo['values'] = columns
             else:
+                self.reset_column_transformations('plan')
                 self.plan_df_loaded = df
                 self.plan_columns = columns
                 if split_combo:
@@ -3300,21 +3301,31 @@ class ReconciliationApp:
             traceback.print_exc()
             return []
     
-    def apply_text_to_columns(self, df, split_column, split_data, file_type):
+    def reset_column_transformations(self, file_type):
+        """Discard operations from the previous file when loading a new one."""
+        setattr(self, f'{file_type}_transform_configs', [])
+        setattr(self, f'{file_type}_split_widths', "")
+        getattr(self, f'{file_type}_split_column').set("")
+
+    def apply_text_to_columns(self, df, split_column, widths, file_type):
         """Apply the text-to-columns split to the dataframe and place new columns at the beginning"""
-        if split_data is None or not split_column:
+        if not widths or not split_column:
             return df
         
         self.add_log(f"🔄 Applying text-to-columns to {file_type}...", "INFO")
         
         df_copy = df.copy()
+        source = df_copy[split_column].astype('string').fillna("")
         df_copy = df_copy.drop(columns=[split_column])
         
         new_cols_created = []
-        for i in range(len(split_data[0])):
+        start = 0
+        for i, width in enumerate(widths):
             new_col_name = f"{split_column}_part_{i+1}"
-            values = [row[i] if i < len(row) else "" for row in split_data]
-            df_copy[new_col_name] = values
+            # The final part contains all remaining text, as in the split dialog.
+            end = start + width if i < len(widths) - 1 else None
+            df_copy[new_col_name] = source.str.slice(start, end).str.strip()
+            start += width
             new_cols_created.append(new_col_name)
             self.add_log(f"   Created column: {new_col_name}", "DEBUG")
         
@@ -3322,8 +3333,43 @@ class ReconciliationApp:
         remaining_cols = [c for c in df_copy.columns if c not in new_cols_created]
         df_copy = df_copy[new_cols_created + remaining_cols]
         
-        self.add_log(f"✅ Text-to-columns applied: {len(split_data[0])} new columns placed at the top/beginning", "SUCCESS")
+        self.add_log(f"✅ Text-to-columns applied: {len(widths)} new columns placed at the top/beginning", "SUCCESS")
         return df_copy
+
+    def apply_column_transformations(self, df, file_type):
+        """Rebuild the preview's ordered operations on freshly read file data."""
+        friendly_name = "History" if file_type == 'history' else "Plan"
+        split_enabled = getattr(self, f'{file_type}_split_enabled').get()
+        for config in getattr(self, f'{file_type}_transform_configs'):
+            if config['type'] == 'split':
+                if not split_enabled:
+                    continue
+                columns = [config['column']]
+            else:
+                columns = config['columns']
+            missing = [column for column in columns if column not in df.columns]
+            if missing:
+                raise ValueError(
+                    f"Cannot reapply {friendly_name} {config['type']}: missing source "
+                    f"column(s): {', '.join(missing)}. Check the column operations "
+                    "and ensure Text-to-Columns is enabled for configured splits."
+                )
+            if config['type'] == 'split':
+                df = self.apply_text_to_columns(df, config['column'], config['widths'], friendly_name)
+            else:
+                df = self.apply_column_concatenation(
+                    df, config['columns'], config['separator'], config['new_column_name'],
+                    config['drop_originals'], friendly_name
+                )
+        return df
+
+    def describe_column_splits(self, file_type):
+        """Describe applied split sources even after later operations remove them."""
+        return "; ".join(
+            f"Column: {config['column']}, Widths: {config['widths']}"
+            for config in getattr(self, f'{file_type}_transform_configs')
+            if config['type'] == 'split'
+        )
     
     def open_concatenate_dialog(self, file_type):
         """Open the Concatenate Columns dialog for the given file type ('history' or 'plan')"""
@@ -3354,10 +3400,10 @@ class ReconciliationApp:
         
         # Remember this operation so it can be replayed on the fresh copy of
         # the file that's read when reconciliation actually runs.
-        config = dict(dialog.result)
+        config = {'type': 'concatenate', **dialog.result}
         
         if file_type == 'history':
-            self.history_concat_configs.append(config)
+            self.history_transform_configs.append(config)
             self.history_df_loaded = new_df
             self.history_columns = new_columns
             self.history_load_id_combo['values'] = new_columns
@@ -3372,7 +3418,7 @@ class ReconciliationApp:
             self.populate_preview('history')
             self.add_log("👁️ Loading History preview updated with concatenated column at beginning", "INFO")
         else:
-            self.plan_concat_configs.append(config)
+            self.plan_transform_configs.append(config)
             self.plan_df_loaded = new_df
             self.plan_columns = new_columns
             self.plan_load_id_combo['values'] = new_columns
@@ -3578,10 +3624,8 @@ class ReconciliationApp:
         self.plan_divide_entry['state'] = 'disabled'
         self.history_split_widths = ""
         self.plan_split_widths = ""
-        self.history_original_data = None
-        self.plan_original_data = None
-        self.history_concat_configs = []
-        self.plan_concat_configs = []
+        self.history_transform_configs = []
+        self.plan_transform_configs = []
         self.history_df_loaded = None
         self.plan_df_loaded = None
         self.history_load_id_combo['values'] = []
@@ -3795,12 +3839,16 @@ class ReconciliationApp:
             return
         
         # Validate text-to-columns
-        if self.history_split_enabled.get() and not self.history_split_column.get():
+        if (self.history_split_enabled.get()
+                and not any(config['type'] == 'split' for config in self.history_transform_configs)
+                and not self.history_split_column.get()):
             self.error_message.set("⚠️ Please select a column to split for History")
             messagebox.showerror("Error", "Please select a column to split for the History file")
             return
         
-        if self.plan_split_enabled.get() and not self.plan_split_column.get():
+        if (self.plan_split_enabled.get()
+                and not any(config['type'] == 'split' for config in self.plan_transform_configs)
+                and not self.plan_split_column.get()):
             self.error_message.set("⚠️ Please select a column to split for Plan")
             messagebox.showerror("Error", "Please select a column to split for the Plan file")
             return
@@ -3864,109 +3912,18 @@ class ReconciliationApp:
             self.add_log(f"📊 History: {len(history_df)} rows, {len(history_df.columns)} columns", "INFO")
             self.add_log(f"📊 Plan: {len(plan_df)} rows, {len(plan_df.columns)} columns", "INFO")
             
-            # Reapply any Concatenate Columns operations configured earlier -
-            # the file was just re-read from disk, so those columns don't exist yet
-            if self.history_concat_configs:
-                for cfg in self.history_concat_configs:
-                    missing = [c for c in cfg['columns'] if c not in history_df.columns]
-                    if missing:
-                        self.add_log(
-                            f"⚠️ Could not reapply History concatenation '{cfg['new_column_name']}' - "
-                            f"missing source column(s): {', '.join(missing)}", "WARNING"
-                        )
-                        continue
-                    history_df = self.apply_column_concatenation(
-                        history_df, cfg['columns'], cfg['separator'], cfg['new_column_name'],
-                        cfg['drop_originals'], "History"
-                    )
-                new_columns = history_df.columns.tolist()
-                def _update_history_combos(cols=new_columns):
-                    try:
-                        self.history_load_id_combo['values'] = cols
-                        self.history_qty_combo['values'] = cols
-                        self.history_split_combo['values'] = cols
-                    except Exception:
-                        pass
-                self.root.after(0, _update_history_combos)
-            
-            if self.plan_concat_configs:
-                for cfg in self.plan_concat_configs:
-                    missing = [c for c in cfg['columns'] if c not in plan_df.columns]
-                    if missing:
-                        self.add_log(
-                            f"⚠️ Could not reapply Plan concatenation '{cfg['new_column_name']}' - "
-                            f"missing source column(s): {', '.join(missing)}", "WARNING"
-                        )
-                        continue
-                    plan_df = self.apply_column_concatenation(
-                        plan_df, cfg['columns'], cfg['separator'], cfg['new_column_name'],
-                        cfg['drop_originals'], "Plan"
-                    )
-                new_columns = plan_df.columns.tolist()
-                def _update_plan_combos(cols=new_columns):
-                    try:
-                        self.plan_load_id_combo['values'] = cols
-                        self.plan_qty_combo['values'] = cols
-                        self.plan_split_combo['values'] = cols
-                    except Exception:
-                        pass
-                self.root.after(0, _update_plan_combos)
-            
-            # Apply text-to-columns if enabled
-            if self.history_split_enabled.get() and self.history_original_data is not None:
-                history_df = self.apply_text_to_columns(
-                    history_df,
-                    self.history_split_column.get(),
-                    self.history_original_data,
-                    "History"
-                )
-                
-                new_columns = history_df.columns.tolist()
-                self.history_load_id_combo['values'] = new_columns
-                self.history_qty_combo['values'] = new_columns
-                self.history_split_combo['values'] = new_columns
-                
-                if history_load_id_col not in new_columns:
-                    self.add_log(f"⚠️ Column '{history_load_id_col}' was removed by split. Please re-select.", "WARNING")
-                    self.history_load_id_col.set("")
-                    history_load_id_col = ""
-                if history_qty_col not in new_columns:
-                    self.add_log(f"⚠️ Column '{history_qty_col}' was removed by split. Please re-select.", "WARNING")
-                    self.history_qty_col.set("")
-                    history_qty_col = ""
-            
-            if self.plan_split_enabled.get() and self.plan_original_data is not None:
-                plan_df = self.apply_text_to_columns(
-                    plan_df,
-                    self.plan_split_column.get(),
-                    self.plan_original_data,
-                    "Plan"
-                )
-                
-                new_columns = plan_df.columns.tolist()
-                self.plan_load_id_combo['values'] = new_columns
-                self.plan_qty_combo['values'] = new_columns
-                self.plan_split_combo['values'] = new_columns
-                
-                if plan_load_id_col not in new_columns:
-                    self.add_log(f"⚠️ Column '{plan_load_id_col}' was removed by split. Please re-select.", "WARNING")
-                    self.plan_load_id_col.set("")
-                    plan_load_id_col = ""
-                if plan_qty_col not in new_columns:
-                    self.add_log(f"⚠️ Column '{plan_qty_col}' was removed by split. Please re-select.", "WARNING")
-                    self.plan_qty_col.set("")
-                    plan_qty_col = ""
-            
-            if not history_load_id_col or not history_qty_col:
-                self.error_message.set("⚠️ Please re-select columns after text-to-columns split")
-                messagebox.showerror("Error", "Please re-select the Load ID and Quantity columns after applying text-to-columns split.")
-                return
-            
-            if not plan_load_id_col or not plan_qty_col:
-                self.error_message.set("⚠️ Please re-select columns after text-to-columns split")
-                messagebox.showerror("Error", "Please re-select the Load ID and Quantity columns after applying text-to-columns split.")
-                return
-            
+            # Reproduce the same split/concatenate sequence used by each preview.
+            history_df = self.apply_column_transformations(history_df, 'history')
+            plan_df = self.apply_column_transformations(plan_df, 'plan')
+
+            for file_type, frame in (('history', history_df), ('plan', plan_df)):
+                columns = frame.columns.tolist()
+                def update_combos(kind=file_type, values=columns):
+                    getattr(self, f'{kind}_load_id_combo')['values'] = values
+                    getattr(self, f'{kind}_qty_combo')['values'] = values
+                    getattr(self, f'{kind}_split_combo')['values'] = values
+                self.root.after(0, update_combos)
+
             missing_history_cols = [c for c in (history_load_id_col, history_qty_col) if c not in history_df.columns]
             missing_plan_cols = [c for c in (plan_load_id_col, plan_qty_col) if c not in plan_df.columns]
             if missing_history_cols or missing_plan_cols:
@@ -4154,11 +4111,11 @@ class ReconciliationApp:
                 
                 if self.history_split_enabled.get():
                     summary_data['Metric'].append('History Text-to-Columns')
-                    summary_data['Value'].append(f"Column: {self.history_split_column.get()}, Widths: {self.history_split_widths}")
+                    summary_data['Value'].append(self.describe_column_splits('history'))
                 
                 if self.plan_split_enabled.get():
                     summary_data['Metric'].append('Plan Text-to-Columns')
-                    summary_data['Value'].append(f"Column: {self.plan_split_column.get()}, Widths: {self.plan_split_widths}")
+                    summary_data['Value'].append(self.describe_column_splits('plan'))
                 
                 if plan_divide_value is not None:
                     summary_data['Metric'].append('Plan Qty Divided By')
@@ -4227,9 +4184,9 @@ class ReconciliationApp:
             )
             
             if self.history_split_enabled.get():
-                summary += f"\n  • History Text-to-Columns: {self.history_split_column.get()} (widths: {self.history_split_widths})"
+                summary += f"\n  • History Text-to-Columns: {self.describe_column_splits('history')}"
             if self.plan_split_enabled.get():
-                summary += f"\n  • Plan Text-to-Columns: {self.plan_split_column.get()} (widths: {self.plan_split_widths})"
+                summary += f"\n  • Plan Text-to-Columns: {self.describe_column_splits('plan')}"
             if plan_divide_value is not None:
                 summary += f"\n  • Plan Qty divided by: {plan_divide_value}"
             

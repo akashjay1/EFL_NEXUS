@@ -239,7 +239,7 @@ class ControllerTests(unittest.TestCase):
             setattr(app, f"tool{number}_error", None)
         app.tool5_ready = False
         app.whatsapp_error = None
-        app.whatsapp_page = WhatsAppPage(self.root, app.pages["whatsapp"], self.controller, {})
+        app.whatsapp_page = WhatsAppPage(self.root, app.pages["whatsapp"], self.controller)
         self.controller.wanted = True
         app.show_page("whatsapp")
         self.assertTrue(app.whatsapp_page.visible)

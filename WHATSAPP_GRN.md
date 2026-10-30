@@ -14,19 +14,54 @@ capture remains active in the same group.
    Browser tab. The adapter restores the exact saved name through validated pointer interactions
    and verifies the selected group before capture. If restoration is unavailable
    or ambiguous, capture resumes after you open the saved group manually.
-2. New incoming photos appear in **GRN Inbox**. Existing visible history is
-   skipped on first setup/upgrade. For an older message, pause, scroll to it,
-   then choose **Import Visible Photos**. Resume monitoring afterward.
+2. Only incoming GRN photos received **within the last hour** are eligible for
+   new scans and automatic photo capture. The cutoff uses the WhatsApp received
+   timestamp, never the time the app first noticed the photo. Older photos,
+   future timestamps and missing/unsupported received times are skipped; the
+   scan status reports skipped counts. The verified adapter's day/month/year
+   display format is interpreted in the PC/browser's local time zone. The window
+   also applies to queued capture retries. Existing captured review records stay
+   available, and work already started can finish.
+   New eligible incoming photos appear in **GRN Inbox**. Existing visible history is
+   skipped on first setup/upgrade. For an earlier message within the last hour, pause, scroll to it,
+   then choose **Scan GRN**. The scan captures currently loaded incoming photos
+   and runs OCR without resuming paused monitoring or scrolling through history.
+   Resume monitoring afterward when ready.
 3. Select a document. Compare its original photo, header crop, gate pass, and
    warehouse. Correct the fields and tick **I checked the number and warehouse**.
-4. Choose **Lane A** or **Lane B**, then **Fill GRN Form**. Open Korber Automation
-   and click the existing **Create GRN** button when ready. Filling never starts
-   a browser flow, creates a GRN, or starts a queue automatically.
+4. Choose **WhatsApp Lane 1** or **WhatsApp Lane 2**, then **Run Gatepass** to fill the lane and
+   immediately start its existing **Create GRN** browser automation. The review
+   confirmation checkbox is still required. To prepare the fields first, use
+   **Fill GRN Form**, then open that WhatsApp lane tab and click **Create GRN** when
+   ready. Filling alone does not start the browser flow or a queue.
 
 Save edits before selecting another photo. OCR retries preserve saved review
-corrections. A previously transferred photo cannot be transferred again from
-the inbox; check the target lane if transfer was interrupted. This status records
-form transfer, not successful GRN creation in the portal.
+corrections. **Run Gatepass** can run a previously filled or completed photo again
+after its current run stops. The **State** column shows **New**, **Running**, or
+**Completed**, independently of OCR and form-transfer status. Completed is set
+only when the GRN flow finishes successfully, including its report/print steps.
+Failed/stopped runs return to New; restart also releases an interrupted run
+without claiming success. Each attempt is saved, and completion can be persisted
+even if its inbox view closes. Matching active runs and waiting/running queue
+items still block overlapping jobs. **Fill GRN Form** retains its duplicate
+transfer guard; use **Run Gatepass** for an intentional repeat. Cleared, DONE,
+and replaced photos cannot be rerun from stale selections.
+The next attempt closes its lane's previous browser before opening a fresh one
+with that lane's profile.
+
+The **Received** column uses the original WhatsApp message time when available;
+fallback timestamps are explicitly marked **Captured**. **Clear List** hides
+this tab's current documents and pending photos while keeping their history,
+images, corrections, and duplicate protection. It does not clear the GDN tab or
+remove lane jobs. Late downloads/OCR results and rescans cannot restore cleared
+rows. **Retry Extraction** remains available for an active selected photo.
+
+An exact quoted **DONE** reply, including one sent by you, hides the original
+photo and any byte-identical copies already deduplicated into its review record.
+The rule also applies to GDN text requests. Only loaded replies can be newly
+observed; decisions persist after restart. `NOT DONE`, `DONE ✅`, and unquoted
+DONE messages do not qualify. Unverified reply links leave items visible with
+a diagnostic; see [WHATSAPP_GDN.md](WHATSAPP_GDN.md) for linkage details.
 
 Matching warehouse/gate-pass photos are flagged. A matching request already
 transferred or present in either lane's GRN queue blocks another transfer.
@@ -57,8 +92,12 @@ If WhatsApp itself cannot load an original, the entry remains visible as waiting
 or retrying; open/download that photo manually in WhatsApp if necessary. The app
 cannot restore detail that is absent from the sender's original image.
 
-Up to four asynchronous retrieval requests can be pending; access to WhatsApp's
-single photo viewer is serialized. One slow photo does not hide other detected
+One queued capture owns WhatsApp's single photo viewer until that capture finishes
+or yields an actionable error. Message discovery continues independently, with a
+MutationObserver retaining photo detections between the periodic scans. Captionless
+photos and each rendered image in an album keep their own source records. An
+observation-buffer overflow is reported for manual comparison with the group.
+One slow photo does not hide other detected
 entries or block text monitoring. Failed retrievals retry after 1, 2, 5, 15, then
 30 seconds. Waiting for the viewer does not increase the failure backoff. Pending
 photos outside rendered history stay listed; reopen their message to finish
@@ -71,8 +110,11 @@ Photo** offers Fit, 100%, and 200% views with scrollbars. Capture is limited to
 20 MB and 30 megapixels per photo. The source is linked to a document only after
 validated image bytes are written and the database transaction succeeds.
 
-OCR tries four orientations, corrects modest skew, and uses adaptive thresholding
-when camera borders or shadows prevent header detection. Only numbers adjacent
+Local OCR has a ten-second document budget, searches four orientations, corrects
+modest skew, and locates the header on a preview. It reads the number from the
+original-resolution crop, with grayscale, contrast and adaptive-threshold variants
+for difficult digits. Only the adjacent number/run qualifies; unrelated numbers
+farther along the same text line are excluded. Only numbers adjacent
 to a GATE PASS label in the upper half of the oriented photo qualify. Linear
 barcodes must be spatially associated with that header. Other document numbers
 and the body QR code are not substitutes. Identifiers remain strings; leading
@@ -83,27 +125,104 @@ empty with the candidate values displayed. A single reading still needs visual
 review. OCR can misread characters; its confidence is not a correctness guarantee.
 No unreadable value is invented or corrected by replacing letters with digits.
 
+## Optional OCR.space fallback
+
+Cloud OCR is **disabled by default**, including in a fresh packaged installation.
+Open **GRN Inbox ? OCR Settings**, enter your **OCR.space API key** and a positive
+daily upload limit, and enable **Automatically upload difficult photos to OCR.space**.
+The default API endpoint is `https://api.ocr.space/parse/image`; the website homepage
+is not an API endpoint, and a website login is not an API key. PRO users may enter
+their OCR.space `/parse/image` endpoint from their service email. Keys are kept in
+Windows Credential Manager, never in the inbox database or release bundle.
+
+Local failures, conflicting readings and recognition warnings can queue a separate
+single cloud worker. It sends the detected header crop, or the oriented/full photo
+when a trustworthy header crop is unavailable. Engine 2 is requested with word
+position overlays. Automatic server rotation and scaling are disabled to keep those
+coordinates tied to the uploaded pixels; the parser checks orthogonal coordinate
+frames itself. Only digits spatially associated with GATE PASS qualify. Plain text
+without word positions is insufficient. OCR.space does not provide word confidence
+scores, so none are invented or displayed as a probability.
+
+Uploads use HTTPS multipart POST with the API key in a header, and no generated
+searchable PDF. JPEG compression preserves pixel dimensions; the app uses a
+conservative 1,000,000-byte upload limit for free-plan compatibility. If the image
+cannot fit without reducing resolution, it is left for manual review. The documented
+service limits and account quotas still apply. No service key or subscription is
+provided by NEXUS.
+
+OCR.space returns its result synchronously. Uploads have a 60-second connect/read
+budget and are never automatically resubmitted after a lost response or an uncertain
+submission. Unlike Azure, OCR.space provides no accepted-operation handle to resume.
+**Retry Cloud** explicitly permits another upload and quota usage. Interrupted
+submissions remain uncertain after restart. Completed results are cached by image
+hash, provider/recognition version and endpoint, avoiding repeated successful uploads.
+The daily reservation limit follows the PC's local date and conservatively includes
+failed or uncertain upload attempts.
+
+Cloud-pending documents cannot be transferred to a lane. Saved corrections,
+recaptures, cleared/DONE records and document revisions are checked before applying
+late results. Distinct local, barcode or OCR.space candidates leave the proposed
+number empty. Photo/warehouse confirmation remains required before GRN creation.
+
+Existing Azure review history and cached results are retained. Earlier automatic
+Azure settings are not reused for OCR.space and require reconfiguration in OCR
+Settings; Azure credentials are never sent to OCR.space. Compatibility code can
+retain explicitly configured legacy Azure jobs, with separate credentials and caches.
+
+See the official [OCR.space API documentation](https://ocr.space/ocrapi) for API-key
+registration, overlay fields and service limits. Before enabling automatic fallback,
+check representative photos with independently verified gate-pass numbers. Local and
+HTTP-double tests do not establish live OCR.space accuracy.
+
 ## Local files and Windows builds
 
 Additive `grn_documents` and `grn_sources` tables live in the existing SQLite inbox
 at `%LOCALAPPDATA%/EFL_NEXUS/whatsapp_gdn/inbox.sqlite3`. Original photos and derived
 crops are under `grn_images` beside that database. Existing GDN rows are unchanged.
-Photos and extracted text are not uploaded to an OCR service or included in Git.
+Photos and extracted text are not included in Git. OCR remains entirely local
+unless the OCR.space fallback is explicitly configured and enabled as described above.
 
-The browser helper owns an OCR worker thread with its own SQLite connection.
+The browser helper owns separate local and cloud OCR worker threads, each with its own SQLite connection.
 Capture callbacks, extraction, and Tk UI updates use separate execution paths,
 so slow OCR does not block the monitoring heartbeat. Interrupted extraction is
 retried after helper restart. **Retry Extraction** also restarts a stopped worker.
 
-Prepare and build with Python 3.11 from the repository directory:
+For a reproducible local comparison, prepare a private JSON manifest containing
+`image`, independently verified digit-string `expected`, and optional `difficult`
+for each sample. Then run `python tests/benchmark_grn_ocr.py MANIFEST OUTPUT_DIRECTORY`
+with the OCR dependencies installed. An optional `--baseline PATH_TO_SAVED_GRN_OCR_PY`
+compares against preserved source using the same runtime. Reports include correct,
+incorrect and unresolved readings plus timings; this runner makes no cloud requests.
+Keep actual photos distinct from transformed variants and do not interpret a small
+sample comparison as a population accuracy estimate.
+
+Install 64-bit Python 3.12 for NEXUS and the Python version embedded in AuditShip
+(currently 3.14). From the repository directory, run either:
 
 ```powershell
-python -m pip install -r requirements.txt -r requirements-build.txt
-python prepare_grn_ocr.py
-python -m PyInstaller EFL_NEXUS.spec --noconfirm
+.\build_standalone.bat
+# Or, for a differential update (prompts for the next build number):
+.\create_patch.bat
 ```
 
-`build_standalone.bat` runs preparation and builds the existing installer too.
+Both scripts call `prepare_build.bat`, create/reuse an isolated Python 3.12
+environment under `build/nexus-build-python312`, install the runtime/build
+requirements, and prepare OCR before compiling the maintained `EFL_NEXUS.spec`.
+The patch path uses that same spec, so it includes OCR.space, recent-photo
+filtering, ZXing, OpenCV and the portable Tesseract assets. Generated updater and
+installer specs stay under `build/generated-specs` instead of replacing tracked
+spec files. `NEXUS_BUILD_PYTHON` may point to an existing 64-bit Python 3.12
+environment. `AUDITSHIP_PYTHON` may identify its separate matching interpreter
+when automatic discovery through the Windows launcher is unavailable.
+
+`build_release.py` inspects AuditShip's embedded Python version before running its
+credential patch in a separate matching environment. It also verifies the frozen
+GRN modules, OCR native extensions and runtime checksums before packaging. Both
+release types exclude inbox state, GRN images, browser profiles, local settings
+and environment files. Patch generation retains SHA-256 differential selection
+and embeds the selected build number; completed review history is not shipped.
+The standalone script additionally builds the installer and full release ZIP.
 The preparer verifies the upstream Tesseract 5.5.3 Windows installer, the build
 extraction tool, and the pinned English model against SHA-256 checksums. It
 extracts rather than installs them, follows native PE dependencies, and retains

@@ -1379,8 +1379,8 @@ class MainApp:
             widgets["label"].configure(text=text)
 
     def _whatsapp_lanes(self):
-        self._ensure_tool1()
-        return getattr(self.root, "_whatsapp_gdn_lanes", {})
+        self._ensure_whatsapp()
+        return self.whatsapp_page.lanes if self.whatsapp_page is not None else {}
 
     def _ensure_whatsapp(self):
         if self.whatsapp_page is not None:
@@ -1391,8 +1391,7 @@ class MainApp:
             return
         try:
             from whatsapp_page import WhatsAppPage
-            self.whatsapp_page = WhatsAppPage(self.root, self.pages["whatsapp"], self.whatsapp_controller,
-                                              getattr(self.root, "_whatsapp_gdn_lanes", {}), self._whatsapp_lanes)
+            self.whatsapp_page = WhatsAppPage(self.root, self.pages["whatsapp"], self.whatsapp_controller)
             self.whatsapp_page.set_visible(self.active_page == "whatsapp")
         except Exception:
             self.whatsapp_error = traceback.format_exc()

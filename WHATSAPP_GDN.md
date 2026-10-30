@@ -1,7 +1,15 @@
 # Continuous WhatsApp GDN monitoring
 
 Open **WhatsApp** in the NEXUS sidebar. It contains **Browser** and **GDN Inbox**
-tabs. The GDN inbox buttons in Korber Automation open this same page.
+tabs, **GRN Inbox**, and dedicated **WhatsApp Lane 1** / **WhatsApp Lane 2** tabs.
+The GDN inbox buttons in Korber Automation open this same page.
+
+The two WhatsApp lanes have their own forms, queues, progress, and isolated
+Chrome profiles (`whatsapp_lane_1` and `whatsapp_lane_2`). Both inboxes offer only
+these two destinations. Korber Automation keeps its existing Lane A / Lane B,
+profiles, and jobs. Existing jobs are not moved; duplicate checks still include
+all instantiated lanes. Creating/opening these tabs does not start a browser or
+run a job. Scroll inside a lane tab to reach its queue and status controls.
 
 ## First setup
 
@@ -36,10 +44,52 @@ owns the browser process and monitoring controller.
 
 ## Review and mapping
 
-Review a captured request, choose Lane A or Lane B, then **Fill Form** or **Add to
+Both inboxes show **Received** using the original WhatsApp message date/time
+when the rendered message exposes it. Otherwise the value is explicitly marked
+**Captured** using the saved local capture time. Legacy pending photos without
+a saved time show **Time unavailable** until reliable metadata is observed.
+
+**Clear List** hides the current GDN list and clears its review selection. The
+GRN tab has its own independent button. History, photos, saved reviews, queued
+actions, and duplicate protection remain; monitoring and new arrivals continue.
+Cleared requests stay hidden after scans and restarts.
+
+A quoted reply whose own body is exactly **DONE** (case-insensitive, surrounding
+whitespace ignored) hides the corresponding request, including an existing inbox
+row. This includes replies sent by the linked account. `NOT DONE`, `DONE ✅`,
+and unquoted DONE messages do not qualify. Completion is retained for repeated
+copies of the same deduplicated request/photo. It does not remove jobs already
+in a Korber lane queue.
+
+The adapter observes loaded replies only. In the verified WebView2 markup,
+opening a quote highlights its original message. NEXUS follows that link, reads
+the original row's message ID, and restores the view. It never matches completion
+by quoted text or gate-pass number. Missing/ambiguous linkage leaves the request
+visible with a notice; user interaction interrupts automated quote navigation.
+
+Review a captured request, choose WhatsApp Lane 1 or WhatsApp Lane 2, then **Fill Form** or **Add to
 Queue**. Queuing does not run the queue. Clipboard and single-message paste import
 remain available on the GDN Inbox tab. Save edits before selecting another row;
 background updates preserve edits to the currently selected request.
+
+**Run Gatepass** validates and fills the selected lane, then starts its existing
+**Create GDN** automation immediately, including opening the browser. It does
+not add the request to the queue. The **State** column shows **New**, **Running**,
+or **Completed**. Completed means the automation finished successfully, including
+the report/print steps. You can run a completed request again; each click starts
+a new attempt and returns its state to Running. Failed or stopped attempts return
+to New after the worker stops (and any failure dialog is dismissed).
+Starting another attempt closes that lane's previous browser session before
+opening the fresh one, so two Chrome sessions do not compete for its profile.
+
+Only a current run or waiting/running queue job blocks another simultaneous run
+of the same warehouse/client/gate pass. Finished queue history and old launch
+flags do not impose a permanent lock. Archived and WhatsApp-DONE requests stay
+hidden. Attempts are retained in `gatepass_runs`; view closure does not lose their
+outcomes. After restart, an interrupted attempt returns to New without claiming
+that it completed. The first execution-state migration backs up an existing
+database beside it as `inbox.before-gatepass-runs-<unique id>.sqlite3` and preserves
+reviews, deduplication keys, and prior actions.
 
 Mappings: WH ID to Warehouse ID; Client Code to Client Code; Gate pass to Gate
 Pass No.; Seal numbers to Seal No.; **Note to Delivery Location**. Door Location
@@ -50,7 +100,8 @@ when filling Korber's single-line field.
 Missing fields, control characters, and unknown warehouses block Fill/Queue.
 Supply missing values explicitly, including N/A if appropriate. Conflicting
 values and matching warehouse/client/gate-pass requests are flagged. Queued
-requests and duplicate queue submissions across lanes remain blocked.
+requests with active lane jobs and duplicate active queue submissions across
+lanes remain blocked.
 
 ## Recovery and status
 
@@ -79,7 +130,8 @@ The GDN parser supports rendered incoming text. GRN document photos now have a
 separate review inbox; see [WHATSAPP_GRN.md](WHATSAPP_GRN.md). Other attachments
 and complete historical capture are unsupported. Incoming-tail markers establish sender signatures for
 consecutive messages. Unclassified GDN-like text raises a capture-gap warning
-instead of being assumed incoming. Quoted reply text is excluded. WhatsApp page selectors remain an experimental adapter;
+instead of being assumed incoming. Quoted originals remain excluded from request
+parsing; reply bodies are read separately for DONE completion. WhatsApp page selectors remain an experimental adapter;
 the signed-in acceptance below records the remaining live scenarios. This is not
 an official WhatsApp API integration and does not use a Meta API token.
 
@@ -111,6 +163,14 @@ python -m py_compile main_app.py whatsapp_gdn.py whatsapp_monitor.py whatsapp_co
 State-machine snapshots in tests are explicitly labelled test doubles. They do
 not prove live WhatsApp DOM compatibility. Real WebView2 smoke checks establish
 browser startup, document evaluation while hidden, embedding, and shutdown only.
+
+Inbox-feature artifacts are under `diagnostics/inbox-features` (ignored by Git),
+including the pre-migration SQLite backup, test logs, window-specific UI previews,
+and live quote-navigation evidence. The live check linked an existing outgoing
+DONE reply to its actual original GDN message and persisted its exclusion.
+Photo completion and ambiguous/missing linkage are covered by explicitly labelled
+test doubles and real storage/UI checks; those do not establish additional live
+WhatsApp markup compatibility.
 
 Signed-in acceptance (requires the user to link the browser):
 

@@ -1,31 +1,19 @@
 @echo off
 setlocal EnableDelayedExpansion
+cd /d "%~dp0"
 echo ========================================================
 echo   EFL NEXUS - Directory Mode Application & Installer
 echo ========================================================
 echo.
 
-:: Pin the EFL NEXUS bundle to Python 3.11.  AuditShip carries a separate
-:: Python 3.14/Tcl runtime; using a floating uv environment can mix that
-:: runtime into EFL NEXUS's PyInstaller payload and prevent EFL from starting.
-set "PY_CMD=py -3.11"
-set "PYI_CMD=py -3.11 -m PyInstaller"
-
-:: Verify Python 3.11 is operational
-%PY_CMD% -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
-if %errorlevel% neq 0 (
-    python -c "import sys; sys.exit(0 if sys.version_info[:2] == (3, 11) else 1)" >nul 2>nul
-    if !errorlevel! equ 0 (
-        set "PY_CMD=python"
-        set "PYI_CMD=pyinstaller"
-    ) else (
-        echo [ERROR] Python 3.11 is required but was not found!
-        echo         Please ensure Python 3.11 is installed.
-        pause
-        exit /b 1
-    )
+:: Both release paths use the same isolated interpreter, dependencies and OCR preparation.
+call "%~dp0prepare_build.bat"
+if errorlevel 1 (
+    echo [ERROR] Build preparation failed. No release package was created.
+    pause
+    exit /b 1
 )
-echo   [Environment] Using Python 3.11 (!PY_CMD!)
+echo   [Environment] Using isolated Python 3.12: !PY_CMD!
 
 :: Read current version and build number
 if not exist "version.txt" (
@@ -49,33 +37,8 @@ if exist "build.txt" (
 echo   Version: %VER%  Build: %BUILD%
 echo.
 
-if not exist "Korber_AuditShip\KORBER AuditShip.exe" (
-    echo [ERROR] Korber_AuditShip\KORBER AuditShip.exe not found!
-    pause
-    exit /b 1
-)
-if not exist "Korber_AuditShip\_internal\python314.dll" (
-    echo [ERROR] Korber_AuditShip runtime folder is incomplete!
-    pause
-    exit /b 1
-)
-
-%PY_CMD% patch_auditship_credentials.py
-if %errorlevel% neq 0 (
-    echo [ERROR] Could not install the AuditShip credential bridge.
-    pause
-    exit /b %errorlevel%
-)
-
-echo Preparing the portable GRN OCR runtime...
-%PY_CMD% prepare_grn_ocr.py
-if %errorlevel% neq 0 (
-    echo [ERROR] Could not prepare the GRN OCR runtime.
-    exit /b 1
-)
-
 echo [1/4] Building high-speed directory-mode EFL_NEXUS...
-%PYI_CMD% EFL_NEXUS.spec --noconfirm
+%PYI_CMD% EFL_NEXUS.spec --noconfirm --clean
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to build EFL_NEXUS
     pause
@@ -93,9 +56,11 @@ if errorlevel 8 (
 
 echo.
 echo [2/4] Building companion updater.exe into dist\EFL_NEXUS...
-%PYI_CMD% updater.py --name=updater --noconsole --noconfirm --onefile --distpath=dist\EFL_NEXUS --icon=icon_2.ico --hidden-import=requests --add-data "icon_2.ico;." --add-data "icon.ico;."
+%PYI_CMD% --specpath build\generated-specs updater.py --name=updater --noconsole --noconfirm --onefile --distpath=dist\EFL_NEXUS --icon=icon_2.ico --hidden-import=requests --add-data "icon_2.ico;." --add-data "icon.ico;."
 if %errorlevel% neq 0 (
-    echo [WARNING] Failed to build updater.exe (skipping)
+    echo [ERROR] Failed to build the required updater.exe
+    pause
+    exit /b 1
 )
 
 echo.
@@ -115,8 +80,15 @@ if exist "dist\EFL_NEXUS\.efl_records_cache.json" del /f /q "dist\EFL_NEXUS\.efl
 if exist "dist\EFL_NEXUS\.load_reconciliation_tool_settings.json" del /f /q "dist\EFL_NEXUS\.load_reconciliation_tool_settings.json"
 
 echo.
+%PY_CMD% build_release.py verify --directory dist\EFL_NEXUS
+if errorlevel 1 (
+    echo [ERROR] Distribution verification failed. Packaging stopped.
+    pause
+    exit /b 1
+)
+
 echo [3/4] Building EFL_NEXUS_Setup.exe (Install Wizard)...
-%PYI_CMD% installer_wizard.py --name=EFL_NEXUS_Setup --noconsole --noconfirm --onefile --icon=icon_2.ico --collect-all=PIL --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --add-data "dist/EFL_NEXUS;payload"
+%PYI_CMD% --specpath build\generated-specs installer_wizard.py --name=EFL_NEXUS_Setup --noconsole --noconfirm --onefile --icon=icon_2.ico --collect-all=PIL --hidden-import=PIL --hidden-import=PIL.Image --hidden-import=PIL.ImageTk --hidden-import=win32com --hidden-import=win32com.client --hidden-import=pythoncom --add-data "dist/EFL_NEXUS;payload"
 if %errorlevel% neq 0 (
     echo [ERROR] Failed to build EFL_NEXUS_Setup.exe
     pause
@@ -125,7 +97,12 @@ if %errorlevel% neq 0 (
 
 echo.
 echo [4/4] Creating GitHub Release ZIP package from directory build...
-%PY_CMD% -c "import zipfile, os, pathlib; ver = open('dist/EFL_NEXUS/version.txt').read().strip(); zpath = f'dist/EFL_NEXUS_v{ver}.zip'; src_dir = pathlib.Path('dist/EFL_NEXUS'); z = zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED, compresslevel=9); [z.write(f, f.relative_to(src_dir)) for f in src_dir.rglob('*') if f.is_file() and not f.name.endswith('.old')]; z.close(); print('Created release zip:', zpath, f'{os.path.getsize(zpath)/1024/1024:.2f} MB')"
+%PY_CMD% build_release.py full-zip --directory dist\EFL_NEXUS --output "dist\EFL_NEXUS_v%VER%.zip"
+if errorlevel 1 (
+    echo [ERROR] Full release ZIP generation failed.
+    pause
+    exit /b 1
+)
 
 echo.
 echo ========================================================

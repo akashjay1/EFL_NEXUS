@@ -1,6 +1,7 @@
 """Real SQLite/image checks. Snapshot and lane doubles are labelled and test-only."""
 
 import base64
+from datetime import datetime
 import io
 from pathlib import Path
 import tempfile
@@ -18,7 +19,8 @@ from grn_ocr import header_anchors
 def snapshot_double(message="test-message", count=1):
     """Minimal test double for an incoming photo snapshot, not real WhatsApp DOM."""
     return {"group_id": "name:Test group", "name": "Test group",
-            "photos": [{"message_id": message, "index": i} for i in range(count)]}
+            "photos": [{"message_id": message, "index": i,
+                        "message_time": datetime.now().strftime('%H:%M, %d/%m/%Y')} for i in range(count)]}
 
 
 def image_double(color="white"):
