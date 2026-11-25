@@ -542,7 +542,12 @@ public static class ReconciliationEngine
         }
 
         string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
-        string outputFile = Path.Combine(outputPath, $"Reconciliations_{timestamp}.xlsx");
+        var nameParts = new[] { selectedJobId, request.Client, request.Gatepass }
+            .Select(p => SanitizeFileNamePart(p ?? ""))
+            .Where(p => p.Length > 0)
+            .ToList();
+        string baseName = nameParts.Count > 0 ? string.Join("_", nameParts) : "Reconciliations";
+        string outputFile = Path.Combine(outputPath, $"{baseName}_{timestamp}.xlsx");
 
         int matchCount = resultRows.Count(r => r.Status == "MATCH");
         int varianceCount = resultRows.Count(r => r.Status.Contains("VARIANCE", StringComparison.OrdinalIgnoreCase));
@@ -575,7 +580,7 @@ public static class ReconciliationEngine
 
         onProgress?.Invoke(85, "🎨 Applying formatting...");
         bool formattingSucceeded = WriteFormattedWorkbook(
-            outputFile, resultRows, historyDf, planDf, summaryMetrics, pkHeader, onLog);
+            outputFile, resultRows, historyDf, planDf, summaryMetrics, pkHeader, onLog, isOutJob);
 
         onLog?.Invoke($"💾 Results saved to: {Path.GetFileName(outputFile)}", "SUCCESS");
 
@@ -707,6 +712,13 @@ public static class ReconciliationEngine
         return "MAJOR VARIANCE";
     }
 
+    private static string SanitizeFileNamePart(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(value.Trim().Select(ch => invalid.Contains(ch) ? '-' : ch).ToArray());
+        return cleaned.Trim(' ', '.');
+    }
+
     public static string ComputeComments(string status, double variance, string entityLabel = "Load") => status switch
     {
         "MATCH" => "Exact match ✅",
@@ -725,7 +737,8 @@ public static class ReconciliationEngine
         TabularDataset planDf,
         List<(string Metric, object Value)> summaryMetrics,
         string pkHeader,
-        Action<string, string>? log)
+        Action<string, string>? log,
+        bool isOutJob = false)
     {
         try
         {
@@ -748,7 +761,9 @@ public static class ReconciliationEngine
 
             // 1. Sheet: variance
             var wsVar = wb.Worksheets.Add("variance");
-            string[] varHeaders = [pkHeader, "Plan Qty", "Loaded Qty", "Variance", "Status", "Comments"];
+            string[] varHeaders = isOutJob
+                ? ["UNIQUE", "LoadPlan QTY", "KorberReport QTY", "Variance", "Status"]
+                : ["Unique", "ASN QTY", "KorberReport QTY", "Variance", "Status"];
             for (int c = 0; c < varHeaders.Length; c++)
             {
                 var cell = wsVar.Cell(1, c + 1);
@@ -775,9 +790,8 @@ public static class ReconciliationEngine
                 wsVar.Cell(excelRow, 3).Value = row.LoadedQty;
                 wsVar.Cell(excelRow, 4).Value = row.Variance;
                 wsVar.Cell(excelRow, 5).Value = row.Status;
-                wsVar.Cell(excelRow, 6).Value = row.Comments;
 
-                for (int c = 1; c <= 6; c++)
+                for (int c = 1; c <= 5; c++)
                 {
                     var cell = wsVar.Cell(excelRow, c);
                     cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
@@ -786,7 +800,7 @@ public static class ReconciliationEngine
                 }
 
                 var (fill, font) = statusStyles.GetValueOrDefault(row.Status, (XLColor.FromHtml("#00B050"), whiteColor));
-                foreach (int styledCol in new[] { 4, 5, 6 })
+                foreach (int styledCol in new[] { 4, 5 })
                 {
                     var sc = wsVar.Cell(excelRow, styledCol);
                     sc.Style.Fill.BackgroundColor = fill;

@@ -1104,8 +1104,11 @@ public partial class ReconciliationView : UserControl
         }
         catch { }
 
+        var (jobClient, _, jobGatepass) = GetVarianceJobDetails();
         var request = new ReconciliationRequest
         {
+            Client = jobClient,
+            Gatepass = jobGatepass,
             HistoryFilePath = historyPath,
             PlanFilePath = planPath,
             HistoryLoadIdCol = historyLoadIdCol,

@@ -71,7 +71,7 @@ public static partial class GrabberSettingsAndPaths
                     target = soundPath;
                 if (target is null)
                 {
-                    var bundled = AppPaths.ResolveResourcePath(Path.Combine("assets", "pending_alert.mp3"));
+                    var bundled = AppPaths.ResolveResourcePath(Path.Combine("assets", "pending_alert.wav"));
                     if (File.Exists(bundled))
                         target = bundled;
                 }
@@ -82,7 +82,9 @@ public static partial class GrabberSettingsAndPaths
                     MciSendString("stop nexus_pending_alert", null, 0, IntPtr.Zero);
                     MciSendString("close nexus_pending_alert", null, 0, IntPtr.Zero);
 
-                    int ret = MciSendString($"open \"{absStr}\" type mpegvideo alias nexus_pending_alert", null, 0, IntPtr.Zero);
+                    int ret = -1;
+                    if (!absStr.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
+                        ret = MciSendString($"open \"{absStr}\" type mpegvideo alias nexus_pending_alert", null, 0, IntPtr.Zero);
                     if (ret != 0)
                         ret = MciSendString($"open \"{absStr}\" alias nexus_pending_alert", null, 0, IntPtr.Zero);
 

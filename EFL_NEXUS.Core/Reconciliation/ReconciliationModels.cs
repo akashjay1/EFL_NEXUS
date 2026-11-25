@@ -133,6 +133,8 @@ public sealed class ReconciliationRequest
     public string ArchiveFolder { get; set; } = @"C:\Reconciliation\Archive";
     public bool ArchiveFiles { get; set; } = true;
     public string QueuedJobId { get; set; } = "";
+    public string Client { get; set; } = "";
+    public string Gatepass { get; set; } = "";
 }
 
 public sealed class ReconciliationResult

@@ -69,6 +69,9 @@ public partial class OutlookEmailView : System.Windows.Controls.UserControl
 
     public Action? OnOpenSettings { get; set; }
 
+    /// <summary>Raised on the UI thread after a GDN/GRN mail is sent: (sendType, gatepass, warehouse).</summary>
+    public Action<string, string, string>? OnGatepassSent { get; set; }
+
     public OutlookEmailView()
         : this(null, null)
     {
@@ -509,6 +512,15 @@ public partial class OutlookEmailView : System.Windows.Controls.UserControl
                 ActivityKpiText.Text = $"Session: {_sessionDispatchCount}";
                 RefreshCounts();
                 ShowSendSuccessToast(job.GatePassNum, job.WarehouseName);
+
+                if (!string.IsNullOrEmpty(job.SendType))
+                {
+                    try { OnGatepassSent?.Invoke(job.SendType, job.GatePassNum, job.WarehouseName); }
+                    catch (Exception kpiEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"KPI capture failed: {kpiEx.Message}");
+                    }
+                }
 
                 int remaining = Volatile.Read(ref _queuedPendingCount);
                 if (remaining > 0)

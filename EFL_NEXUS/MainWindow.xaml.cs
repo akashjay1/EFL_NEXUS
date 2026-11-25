@@ -647,7 +647,14 @@ public partial class MainWindow : Window
             return;
         try
         {
-            _tool3View = new OutlookEmailView(_configStore, () => ShowPage("settings"));
+            _tool3View = new OutlookEmailView(_configStore, () => ShowPage("settings"))
+            {
+                OnGatepassSent = (sendType, gatepass, warehouse) =>
+                {
+                    EnsureTool4();
+                    _tool4View?.RecordSentGatepass(sendType, gatepass, warehouse);
+                }
+            };
             PageTool3Host.Children.Clear();
             PageTool3Host.Children.Add(_tool3View);
         }

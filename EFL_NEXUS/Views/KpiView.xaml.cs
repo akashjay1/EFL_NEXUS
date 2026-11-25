@@ -593,6 +593,32 @@ public partial class KpiView : System.Windows.Controls.UserControl
         return true;
     }
 
+    /// <summary>Records a gatepass sent via the mail sender as a GDN/GRN Creation KPI entry.</summary>
+    public bool RecordSentGatepass(string sendType, string gatepass, string warehouseHint)
+    {
+        gatepass = (gatepass ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(gatepass) || string.Equals(gatepass, "N/A", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? section = string.Equals(sendType, "GDN", StringComparison.OrdinalIgnoreCase) ? "GDN Creation:"
+            : string.Equals(sendType, "GRN", StringComparison.OrdinalIgnoreCase) ? "GRN Creation:"
+            : null;
+        if (section is null)
+            return false;
+
+        if (_isPastDate)
+            GoToToday();
+
+        var hint = KpiTracking.Warehouse(warehouseHint);
+        string site = KpiTracking.WarehouseOptions(LoadJobMap()).Contains(hint, StringComparer.Ordinal)
+            ? hint
+            : KpiTracking.Warehouse(_currentWarehouse);
+
+        bool saved = SaveToSheet1(section, gatepass, "New", site, null, KpiTracking.RegistrationTimestamp());
+        AddActivityLog("MAIL", $"{sendType} gatepass {gatepass} {(saved ? "added to KPI" : "not added to KPI")}", saved ? "INFO" : "WARNING");
+        return saved;
+    }
+
     public string RecordStartedJob(JobMapEntry record, KpiUserProfile? profile)
     {
         string jobId = (record.JobId ?? string.Empty).Trim();
