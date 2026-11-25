@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EFL_NEXUS (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/EFL_NEXUS/bin/Debug/net9.0-windows/EFL_NEXUS.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/EFL_NEXUS/bin/Debug/net9.0-windows",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    },
+    {
+      "name": "C#: EFL_NEXUS Debug",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/EFL_NEXUS/EFL_NEXUS.csproj"
+    }
+  ]
+}

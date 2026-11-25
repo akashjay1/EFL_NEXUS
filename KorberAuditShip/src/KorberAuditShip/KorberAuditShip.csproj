@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>KorberAuditShip</AssemblyName>
+    <RootNamespace>KorberAuditShip</RootNamespace>
+    <AssemblyTitle>KORBER AuditShip</AssemblyTitle>
+    <Product>KORBER AuditShip</Product>
+    <Version>2.0.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.0" />
+    <PackageReference Include="ExcelDataReader" Version="3.8.0" />
+    <PackageReference Include="ExcelDataReader.DataSet" Version="3.8.0" />
+    <PackageReference Include="Selenium.WebDriver" Version="4.43.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.10" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.10" />
+  </ItemGroup>
+
+</Project>

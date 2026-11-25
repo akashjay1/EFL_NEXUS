@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>EFL_NEXUS</AssemblyName>
+    <RootNamespace>EflNexus.App</RootNamespace>
+    <StartupObject>EflNexus.App.Program</StartupObject>
+    <ApplicationIcon>..\icon_2.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>EFL_NEXUS.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EFL_NEXUS.Core\EFL_NEXUS.Core.csproj" />
+    <ProjectReference Include="..\EFL_NEXUS.Updater\EFL_NEXUS.Updater.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\KorberAuditShip\src\KorberAuditShip\KorberAuditShip.csproj" />
+  </ItemGroup>
+
+  <Target Name="CopyUpdaterArtifacts" AfterTargets="Build">
+    <PropertyGroup>
+      <_UpdaterOutDir>..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\</_UpdaterOutDir>
+      <_UpdaterOutDirRid Condition="'$(RuntimeIdentifier)' != ''">..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\</_UpdaterOutDirRid>
+    </PropertyGroup>
+    <ItemGroup>
+      <_UpdaterFiles Include="$(_UpdaterOutDir)updater.exe;$(_UpdaterOutDir)updater.dll;$(_UpdaterOutDir)updater.deps.json;$(_UpdaterOutDir)updater.runtimeconfig.json" Condition="Exists('$(_UpdaterOutDir)updater.exe')" />
+      <_UpdaterFilesRid Include="$(_UpdaterOutDirRid)updater.exe;$(_UpdaterOutDirRid)updater.dll;$(_UpdaterOutDirRid)updater.deps.json;$(_UpdaterOutDirRid)updater.runtimeconfig.json" Condition="'$(RuntimeIdentifier)' != '' and Exists('$(_UpdaterOutDirRid)updater.exe')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_UpdaterFiles)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="'@(_UpdaterFiles)' != ''" />
+    <Copy SourceFiles="@(_UpdaterFilesRid)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="'@(_UpdaterFilesRid)' != ''" />
+  </Target>
+
+  <Target Name="CopyUpdaterArtifactsToPublish" AfterTargets="Publish">
+    <PropertyGroup>
+      <_UpdaterOutDir>..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\</_UpdaterOutDir>
+      <_UpdaterOutDirRid Condition="'$(RuntimeIdentifier)' != ''">..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\</_UpdaterOutDirRid>
+      <_UpdaterPubDir>..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\publish\</_UpdaterPubDir>
+      <_UpdaterPubDirRid Condition="'$(RuntimeIdentifier)' != ''">..\EFL_NEXUS.Updater\bin\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\publish\</_UpdaterPubDirRid>
+    </PropertyGroup>
+    <ItemGroup>
+      <_UpdaterPubFiles Include="$(_UpdaterPubDirRid)updater.exe;$(_UpdaterPubDirRid)updater.dll;$(_UpdaterPubDirRid)updater.deps.json;$(_UpdaterPubDirRid)updater.runtimeconfig.json" Condition="'$(RuntimeIdentifier)' != '' and Exists('$(_UpdaterPubDirRid)updater.exe')" />
+      <_UpdaterPubFilesFallback Include="$(_UpdaterPubDir)updater.exe;$(_UpdaterPubDir)updater.dll;$(_UpdaterPubDir)updater.deps.json;$(_UpdaterPubDir)updater.runtimeconfig.json" Condition="Exists('$(_UpdaterPubDir)updater.exe') and '@(_UpdaterPubFiles)' == ''" />
+      <_UpdaterBuildFallback Include="$(_UpdaterOutDirRid)updater.exe;$(_UpdaterOutDirRid)updater.dll;$(_UpdaterOutDirRid)updater.deps.json;$(_UpdaterOutDirRid)updater.runtimeconfig.json" Condition="'$(RuntimeIdentifier)' != '' and Exists('$(_UpdaterOutDirRid)updater.exe') and '@(_UpdaterPubFiles)' == '' and '@(_UpdaterPubFilesFallback)' == ''" />
+      <_UpdaterBuildFallbackPlain Include="$(_UpdaterOutDir)updater.exe;$(_UpdaterOutDir)updater.dll;$(_UpdaterOutDir)updater.deps.json;$(_UpdaterOutDir)updater.runtimeconfig.json" Condition="Exists('$(_UpdaterOutDir)updater.exe') and '@(_UpdaterPubFiles)' == '' and '@(_UpdaterPubFilesFallback)' == '' and '@(_UpdaterBuildFallback)' == ''" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_UpdaterPubFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(_UpdaterPubFiles)' != ''" />
+    <Copy SourceFiles="@(_UpdaterPubFilesFallback)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(_UpdaterPubFilesFallback)' != ''" />
+    <Copy SourceFiles="@(_UpdaterBuildFallback)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(_UpdaterBuildFallback)' != ''" />
+    <Copy SourceFiles="@(_UpdaterBuildFallbackPlain)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(_UpdaterBuildFallbackPlain)' != ''" />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3595.46" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\version.txt" Link="version.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\build.txt" Link="build.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\release_notes.txt" Link="release_notes.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\icon_2.ico" Link="icon_2.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\icon.ico" Link="icon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\aurora_bg.png" Link="aurora_bg.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\credentials.json" Link="credentials.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\efl_users.json" Link="efl_users.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\templates.xlsx" Link="templates.xlsx" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\variance_templates.xlsx" Link="variance_templates.xlsx" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\assets\**\*">
+      <Link>assets\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

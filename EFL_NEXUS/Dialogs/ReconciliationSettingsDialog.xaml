@@ -1,0 +1,41 @@
+<Window x:Class="EflNexus.App.Dialogs.ReconciliationSettingsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Width="440"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#FAF8F2">
+    <StackPanel x:Name="RootPanel" Margin="20">
+        <TextBlock x:Name="HeaderText"
+                   Text="⚙️ Settings"
+                   FontFamily="Segoe UI"
+                   FontSize="18"
+                   FontWeight="Bold"
+                   Foreground="#0F172A"
+                   Margin="0,0,0,15" />
+
+        <CheckBox x:Name="RememberCheck"
+                  Content="💾 Remember my last used settings (window size, folders, options)"
+                  FontFamily="Segoe UI"
+                  FontSize="12"
+                  Margin="0,6"
+                  Click="RememberCheck_Click" />
+
+        <CheckBox x:Name="DarkThemeCheck"
+                  Content="🌙 Dark theme"
+                  FontFamily="Segoe UI"
+                  FontSize="12"
+                  Margin="0,6"
+                  Click="DarkThemeCheck_Click" />
+
+        <Separator Margin="0,15,0,10" />
+
+        <Button x:Name="CloseBtn"
+                Content="Close"
+                HorizontalAlignment="Right"
+                Padding="16,6"
+                Click="Close_Click" />
+    </StackPanel>
+</Window>

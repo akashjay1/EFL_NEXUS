@@ -1,0 +1,14 @@
+{
+  "site": "https://efl-nexus-admin.netlify.app",
+  "deploy_id": "6aeb0e86ac24f6af03e3a3ae",
+  "verified_assets": [
+    "/assets/index-Cqw5mHzF.js",
+    "/assets/index-CCEbtgXN.css"
+  ],
+  "edge_function": "device-jobs",
+  "migration": "20261104104646_reconciliation_job_monitoring",
+  "dashboard_tests": 45,
+  "python_tests": 75,
+  "protocol_tests": 7,
+  "installed_desktop_rebuilt": false
+}

@@ -1,0 +1,346 @@
+<UserControl x:Class="EflNexus.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#FAF8F2">
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Margin="48,36,48,36">
+            <TextBlock Text="Settings &amp; System Status"
+                       FontFamily="Segoe UI"
+                       FontSize="27"
+                       FontWeight="Bold"
+                       Foreground="#0F172A"
+                       Margin="0,0,0,20" />
+
+            <!-- 1. Software Updates -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="SOFTWARE UPDATES" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="VersionPillText" Text="v1.0.8 (Current)" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#00E5FF" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Check for new releases, patch updates, and performance enhancements."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" Margin="0,0,0,14" />
+                    <Button Content="🔄  Check for Updates"
+                            Style="{StaticResource DarkButtonStyle}"
+                            HorizontalAlignment="Left"
+                            Padding="16,8"
+                            Click="CheckUpdates_Click" />
+                </StackPanel>
+            </Border>
+
+            <!-- 2. KPI User Profile -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="KPI USER PROFILE" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="KpiStatusText" Text="● Needs Setup" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#F59E0B" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Use your registered User ID and individual User Code for KPI entry and exports."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" Margin="0,0,0,14" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="User ID:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="KpiUserIdBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="User Code:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,0" />
+                        <TextBox x:Name="KpiUserCodeBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Save KPI Profile" Style="{StaticResource DarkButtonStyle}" Padding="16,8" Click="SaveKpiProfile_Click" />
+                        <TextBlock x:Name="KpiMsgText" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 3. Live Operators -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="LIVE OPERATORS" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" />
+                    <TextBlock Text="Share your saved KPI name or device name and selected tool with the admin dashboard."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" Margin="0,8,0,10" />
+                    <TextBlock x:Name="PresenceStatusText" Text="Tracking disabled." FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" Margin="0,0,0,12" />
+                    <Button Content="Cloud Diagnostics"
+                            Background="#475569" Foreground="#FFFFFF"
+                            Style="{StaticResource NexusButtonBase}"
+                            HorizontalAlignment="Left" Padding="16,8"
+                            Click="OpenPresenceSettings_Click" />
+                </StackPanel>
+            </Border>
+
+            <!-- 4. Körber Cloud Authentication -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="KÖRBER CLOUD AUTHENTICATION" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="KorberStatusText" Text="● Needs Setup" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#F59E0B" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Configure your personal Körber Cloud portal credentials. Automation lanes will automatically use these credentials to authenticate."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,14" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="User Name:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="KorberUserBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Password:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <Grid Grid.Row="1" Grid.Column="1" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <PasswordBox x:Name="KorberPassBox" Grid.Column="0" Style="{StaticResource ModernPasswordBoxStyle}" PasswordChar="•" />
+                            <TextBox x:Name="KorberPassPlainBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}" Visibility="Collapsed" />
+                            <Button x:Name="KorberToggleBtn" Grid.Column="2" Content="👁 Show" Style="{StaticResource SecondaryButtonStyle}" Padding="10,4" Click="ToggleKorberPass_Click" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Portal URL:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,0" />
+                        <TextBox x:Name="KorberUrlBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="💾  Save Credentials" Style="{StaticResource DarkButtonStyle}" Padding="16,8" Click="SaveKorberSettings_Click" />
+                        <TextBlock x:Name="KorberMsgText" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#49CF9E" VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 5. Korber AuditShip Credentials -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="KORBER AUDITSHIP CREDENTIALS" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="AuditShipStatusText" Text="● Needs Setup" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#F59E0B" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Save the username, password, and Fork ID for the Korber AuditShip tool."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" Margin="0,0,0,14" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="User Name:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="AuditShipUserBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Password:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <Grid Grid.Row="1" Grid.Column="1" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <PasswordBox x:Name="AuditShipPassBox" Grid.Column="0" Style="{StaticResource ModernPasswordBoxStyle}" PasswordChar="•" />
+                            <TextBox x:Name="AuditShipPassPlainBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}" Visibility="Collapsed" />
+                            <Button x:Name="AuditShipToggleBtn" Grid.Column="2" Content="👁 Show" Style="{StaticResource SecondaryButtonStyle}" Padding="10,4" Click="ToggleAuditShipPass_Click" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Fork ID:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,0" />
+                        <TextBox x:Name="AuditShipForkBox" Grid.Row="2" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="💾  Save Credentials" Style="{StaticResource DarkButtonStyle}" Padding="16,8" Click="SaveAuditShipSettings_Click" />
+                        <TextBlock x:Name="AuditShipMsgText" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#49CF9E" VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 6. Pending Jobs -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="PENDING JOBS" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="GrabberStatusText" Text="● Needs Setup" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#F59E0B" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Shared portal login is preconfigured for new installations. Password changes are saved in Windows Credential Manager."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,14" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="175" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Login URL:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="GrabberLoginUrlBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Username / Email:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="GrabberUserBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="Password:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <Grid Grid.Row="2" Grid.Column="1" Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <PasswordBox x:Name="GrabberPassBox" Grid.Column="0" Style="{StaticResource ModernPasswordBoxStyle}" PasswordChar="•" />
+                            <TextBox x:Name="GrabberPassPlainBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}" Visibility="Collapsed" />
+                            <Button x:Name="GrabberToggleBtn" Grid.Column="2" Content="👁 Show" Style="{StaticResource SecondaryButtonStyle}" Padding="10,4" Click="ToggleGrabberPass_Click" />
+                        </Grid>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Reconciliation URL:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="GrabberReconUrlBox" Grid.Row="3" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Auto-Refresh (seconds):" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="GrabberRefreshSecBox" Grid.Row="4" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="Sound Notification:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <CheckBox x:Name="GrabberSoundEnabledCheck"
+                                  Grid.Row="5" Grid.Column="1"
+                                  Content="Play notification sound when new pending jobs are detected"
+                                  FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A"
+                                  VerticalAlignment="Center" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="Sound File:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,0" />
+                        <Grid Grid.Row="6" Grid.Column="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="4" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="GrabberSoundPathBox" Grid.Column="0" Style="{StaticResource ModernTextBoxStyle}" />
+                            <Button Grid.Column="2" Content="Browse..." Style="{StaticResource SecondaryButtonStyle}" Padding="10,4" Click="BrowseGrabberSound_Click" />
+                            <Button Grid.Column="4" Content="🔊 Test Sound" Style="{StaticResource SecondaryButtonStyle}" Foreground="#16A34A" Padding="10,4" Click="TestGrabberSound_Click" />
+                        </Grid>
+                    </Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="Save Tool 6 Settings" Style="{StaticResource DarkButtonStyle}" Padding="16,8" Click="SaveGrabberSettings_Click" />
+                        <Button Content="Clear Saved Credentials" Style="{StaticResource SecondaryButtonStyle}" Margin="8,0,0,0" Padding="16,8" Click="ClearGrabberCredentials_Click" />
+                        <TextBlock x:Name="GrabberMsgText" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 7. Google Sheets & Cloud Sync -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="GOOGLE SHEETS &amp; CLOUD SYNC" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" VerticalAlignment="Center" />
+                        <Border DockPanel.Dock="Right" Background="#0D1B2A" Padding="8,3" HorizontalAlignment="Right">
+                            <TextBlock x:Name="GsheetStatusText" Text="● Needs Setup" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#F59E0B" />
+                        </Border>
+                    </DockPanel>
+                    <TextBlock Text="Configure the Google Apps Script Web App URL and Google Sheet URL for real-time dispatch tracking and records."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,14" />
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Web App URL:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,8" />
+                        <TextBox x:Name="WebappUrlBox" Grid.Row="0" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" Margin="0,0,0,8" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Google Sheet URL:" Style="{StaticResource FieldLabelStyle}" Margin="0,0,12,0" />
+                        <TextBox x:Name="SheetUrlBox" Grid.Row="1" Grid.Column="1" Style="{StaticResource ModernTextBoxStyle}" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="💾  Save Settings" Style="{StaticResource DarkButtonStyle}" Padding="16,8" Click="SaveGsheetSettings_Click" />
+                        <Button Content="📊  View Records Sheet ↗" Style="{StaticResource SecondaryButtonStyle}" Margin="10,0,0,0" Padding="16,8" Click="OpenGoogleSheet_Click" />
+                        <TextBlock x:Name="GsheetMsgText" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#49CF9E" VerticalAlignment="Center" Margin="14,0,0,0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 8. Storage & Cache Management -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="STORAGE &amp; CACHE MANAGEMENT" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" Margin="0,0,0,8" />
+                    <TextBlock Text="Clear stored browser profiles, session locks, driver binaries, and saved templates."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#64748B" Margin="0,0,0,14" />
+                    <Button Content="🗑️  Clear Cache &amp; Saved Data..."
+                            Style="{StaticResource DarkButtonStyle}"
+                            HorizontalAlignment="Left"
+                            Padding="16,8"
+                            Click="OpenClearCache_Click" />
+                </StackPanel>
+            </Border>
+
+            <!-- 9. System Diagnostics -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20" Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="SYSTEM DIAGNOSTICS" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" Margin="0,0,0,8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Engine Runtime:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#64748B" Margin="0,3" />
+                        <TextBlock x:Name="DiagRuntimeText" Grid.Row="0" Grid.Column="1" FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" Margin="0,3" />
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="Module Warmup:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#64748B" Margin="0,3" />
+                        <TextBlock Text="Active Background Thread" Grid.Row="1" Grid.Column="1" FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" Margin="0,3" />
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="App Directory:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#64748B" Margin="0,3" />
+                        <TextBlock x:Name="DiagAppDirText" Grid.Row="2" Grid.Column="1" FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" TextWrapping="Wrap" Margin="0,3" />
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="Körber Account:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#64748B" Margin="0,3" />
+                        <TextBlock x:Name="DiagKorberStatusText" Grid.Row="3" Grid.Column="1" FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" Margin="0,3" />
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="Google Cloud Sync:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" Foreground="#64748B" Margin="0,3" />
+                        <TextBlock x:Name="DiagSyncStatusText" Grid.Row="4" Grid.Column="1" FontFamily="Segoe UI" FontSize="12" Foreground="#0F172A" Margin="0,3" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- 10. About EFL NEXUS -->
+            <Border Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" Padding="24,20">
+                <StackPanel>
+                    <TextBlock Text="ABOUT EFL NEXUS" FontFamily="Segoe UI" FontSize="11" FontWeight="Bold" Foreground="#64748B" Margin="0,0,0,8" />
+                    <TextBlock Text="EFL NEXUS is an enterprise automation suite combining Korber Automation, Load Reconciliation, and Outlook Email Dispatch into a single unified client.&#x0A;&#x0A;For feedback, questions, or bug reports, please refer to the internal repository or contact the automation engineering team."
+                               FontFamily="Segoe UI" FontSize="12" Foreground="#334155" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

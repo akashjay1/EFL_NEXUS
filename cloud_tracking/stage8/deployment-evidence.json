@@ -1,0 +1,115 @@
+{
+  "date": "2026-11-02",
+  "timezone": "Asia/Colombo",
+  "branch": "Nexus-Grabber",
+  "site_id": "7d9dac86-9cf2-486c-be72-0997a5ab780b",
+  "deploy_id": "6ae8c178eb72cf93f470cde6",
+  "state": "ready",
+  "url": "https://efl-nexus-admin.netlify.app",
+  "context": "production",
+  "published_at_utc": "2026-11-02T16:59:40.099Z",
+  "manual_deploy": true,
+  "netlify_build_id": null,
+  "deploy_seconds": 3,
+  "summary": {
+    "status": "ready",
+    "messages": [
+      {
+        "type": "info",
+        "title": "3 new files uploaded",
+        "description": "1 generated page and 2 assets changed.",
+        "details": "New pages include:\n- index.html\n"
+      },
+      {
+        "type": "info",
+        "title": "1 redirect rule processed",
+        "description": "All redirect rules deployed without errors.",
+        "details": ""
+      },
+      {
+        "type": "info",
+        "title": "1 header rule processed",
+        "description": "All header rules deployed without errors.",
+        "details": ""
+      },
+      {
+        "type": "info",
+        "title": "No functions deployed",
+        "description": "This deploy did not include any functions. [Learn more about Netlify Functions](https://docs.netlify.com/functions/overview/)",
+        "details": null
+      },
+      {
+        "type": "info",
+        "title": "No edge functions deployed",
+        "description": "This deploy did not include any edge functions. [Learn more about Edge Functions](https://docs.netlify.com/edge-functions/overview/)",
+        "details": null
+      }
+    ]
+  },
+  "artifact_sha256": "D62FE8C17275D23481541D3C49B95CE14AE92F97CE4111A85742E4E5516EC55E",
+  "served_entry_script": "/assets/index-_f4DlRcw.js",
+  "verification": {
+    "frontend_tests_passed": 44,
+    "frontend_test_files": 6,
+    "clean_install": true,
+    "npm_audit_vulnerabilities": 0,
+    "production_build": true,
+    "stage7_python_report": {
+      "passed": 328,
+      "skipped": 5,
+      "discovered": 333,
+      "rerun_in_stage8": false
+    },
+    "supabase_project": "wykmgymitdxkqbpywpzh",
+    "edge_functions_active": [
+      "device-enroll",
+      "device-telemetry",
+      "admin-control"
+    ],
+    "production_origin": "https://efl-nexus-admin.netlify.app",
+    "admin_preflight_status": 204,
+    "unapproved_origin_status": 403,
+    "desktop_browser_origin_status": 403,
+    "anonymous_snapshot_status": 401,
+    "anonymous_devices_status": 401,
+    "anonymous_admin_status": 401,
+    "owner_verified_totp_factors": 1,
+    "owner_latest_session_aal": "aal2",
+    "dashboard_aal2": true,
+    "private_realtime": {
+      "poll_seconds_during_check": 60,
+      "updated_before": "22:26:40 Asia/Colombo",
+      "updated_after": "22:27:00 Asia/Colombo",
+      "signal": "refresh-only private broadcast",
+      "default_poll_seconds_restored": 15
+    },
+    "observed_devices": 4,
+    "observed_revoked_devices": 1,
+    "observed_session_history": 4,
+    "observed_daily_sessions": 4,
+    "observed_active_sessions": 0,
+    "spa_direct_path_loaded": true,
+    "netlify_private_site_preserved": true,
+    "headers_rule_processed": true,
+    "authenticated_response_header_capture": false,
+    "monitoring_default_gate": false,
+    "pilot_hook_authorized": false,
+    "pilot_hook_installations": [],
+    "pilot_devices_provisioned_this_stage": false,
+    "backend_schema_changed": false,
+    "rls_changed": false,
+    "backend_functions_redeployed": false,
+    "production_data_deleted": false
+  },
+  "remaining": [
+    "Designate the two physical pilot computers and their actual installation UUIDs.",
+    "Run read-only workstation preflight and validate provisioning under both Windows accounts.",
+    "Obtain separate owner authorization before building/enabling pilot monitoring.",
+    "Perform physical offline-recovery and approved revocation acceptance after activation."
+  ],
+  "advisory": {
+    "name": "auth_leaked_password_protection",
+    "level": "WARN",
+    "remediation": "https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection"
+  }
+}

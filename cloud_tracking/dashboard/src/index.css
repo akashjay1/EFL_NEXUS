@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/*
+ * EFL NEXUS admin — light theme.
+ * The original pages were written against a dark palette (slate-950 page, slate-900 cards,
+ * slate-100 text). The palette below inverts those shades and darkens the accent text
+ * shades (300/400) so every existing utility class renders as an accessible light UI.
+ * New components use the semantic tokens (--color-surface, --color-ink, ...) directly.
+ */
+@theme {
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-display: 'Segoe UI Variable Display', 'Segoe UI', 'Inter', system-ui, sans-serif;
+
+  /* Semantic tokens */
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-line: #e4e7ec;
+  --color-line-strong: #d0d5dd;
+  --color-ink: #101828;
+  --color-ink-2: #344054;
+  --color-muted: #5b6472;
+  --color-accent: #2563eb;
+  --color-accent-strong: #1d4ed8;
+  --color-accent-soft: #eff4ff;
+
+  /* Inverted neutrals (dark-theme class names → light values) */
+  --color-slate-50: #0b1220;
+  --color-slate-100: #101828;
+  --color-slate-200: #1f2937;
+  --color-slate-300: #344054;
+  --color-slate-400: #5b6472;
+  --color-slate-500: #667085;
+  --color-slate-600: #98a2b3;
+  --color-slate-700: #d0d5dd;
+  --color-slate-800: #e4e7ec;
+  --color-slate-850: #f9fafb;
+  --color-slate-900: #ffffff;
+  --color-slate-950: #f6f7f9;
+  --color-navy-900: #ffffff;
+  --color-navy-950: #f6f7f9;
+
+  /* Accent text shades darkened for 4.5:1 contrast on white */
+  --color-blue-300: #1e40af;
+  --color-blue-400: #1d4ed8;
+  --color-emerald-200: #065f46;
+  --color-emerald-300: #047857;
+  --color-emerald-400: #067647;
+  --color-amber-200: #78350f;
+  --color-amber-300: #92400e;
+  --color-amber-400: #b54708;
+  --color-red-200: #7a271a;
+  --color-red-300: #912018;
+  --color-red-400: #b42318;
+  --color-purple-300: #5b21b6;
+  --color-purple-400: #6d28d9;
+  --color-indigo-300: #3730a3;
+  --color-indigo-400: #4338ca;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  :focus-visible {
+    outline: 3px solid #93b4fd;
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #d0d5dd;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #98a2b3;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 min-h-10 px-3.5 rounded-lg border border-line-strong bg-surface text-sm font-semibold text-ink-2 transition-colors hover:bg-canvas disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-white hover:bg-accent-strong;
+  }
+  .btn-danger {
+    @apply border-red-200/30 text-red-400 hover:bg-red-500/5;
+  }
+  .btn-sm {
+    @apply min-h-8 px-2.5 text-xs;
+  }
+  .field {
+    @apply w-full min-h-10 rounded-lg border border-line-strong bg-surface px-3 text-sm text-ink placeholder:text-slate-500 focus:border-accent focus:outline-none focus:ring-2 focus:ring-blue-500/20;
+  }
+}

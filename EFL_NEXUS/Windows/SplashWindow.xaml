@@ -1,0 +1,54 @@
+<Window x:Class="EflNexus.App.Windows.SplashWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="EFL NEXUS"
+        Width="480"
+        Height="250"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        Topmost="True"
+        Background="#0B1420">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="3" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#00E5FF" />
+
+        <StackPanel Grid.Row="1" Margin="34,28,34,28">
+            <TextBlock Text="EFL NEXUS"
+                       FontFamily="Segoe UI"
+                       FontSize="30.67"
+                       FontWeight="Bold"
+                       Foreground="#FFFFFF"
+                       HorizontalAlignment="Left" />
+
+            <TextBlock Text="Starting your workspace"
+                       FontFamily="Segoe UI"
+                       FontSize="13.33"
+                       Foreground="#94A3B8"
+                       Margin="0,3,0,24"
+                       HorizontalAlignment="Left" />
+
+            <ProgressBar x:Name="Progress"
+                         Minimum="0"
+                         Maximum="100"
+                         Value="10"
+                         Height="14"
+                         BorderThickness="0"
+                         Background="#162E4C"
+                         Foreground="#49CF9E" />
+
+            <TextBlock x:Name="StatusText"
+                       Text="Loading application modules..."
+                       FontFamily="Segoe UI"
+                       FontSize="12"
+                       Foreground="#CBD5E1"
+                       Margin="0,10,0,0"
+                       HorizontalAlignment="Left" />
+        </StackPanel>
+    </Grid>
+</Window>

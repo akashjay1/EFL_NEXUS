@@ -1,0 +1,506 @@
+<UserControl x:Class="KorberAuditShip.Views.KorberAuditShipView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             Background="#F3F6FA"
+             FontFamily="Segoe UI">
+
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- Dark Sidebar Action Button -->
+        <Style x:Key="SidebarButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="38" />
+            <Setter Property="Margin" Value="0,4" />
+            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.90" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.78" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Workspace Pill / Toolbar Button -->
+        <Style x:Key="ToolbarButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.90" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.78" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Secondary Light Button -->
+        <Style x:Key="SecondaryButtonStyle" TargetType="Button" BasedOn="{StaticResource ToolbarButtonStyle}">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="#1D2939" />
+            <Setter Property="BorderBrush" Value="#D0D5DD" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <!-- DataGrid Styling -->
+        <Style x:Key="KorberColumnHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#2563EB" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="BorderBrush" Value="#1D4ED8" />
+            <Setter Property="BorderThickness" Value="0,0,1,0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+
+        <Style x:Key="KorberCellStyle" TargetType="DataGridCell">
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#DBEAFE" />
+                    <Setter Property="Foreground" Value="#101828" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Left Dark Sidebar (#101828) -->
+        <Border Grid.Column="0" Background="#101828" Padding="18,20,18,16">
+            <DockPanel LastChildFill="True">
+                <!-- Brand Header -->
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,14">
+                    <TextBlock Text="KÖRBER"
+                               Foreground="#FFFFFF"
+                               FontSize="24"
+                               FontWeight="Bold" />
+                    <TextBlock Text="Operations Console"
+                               Foreground="#98A2B3"
+                               FontSize="13"
+                               Margin="0,2,0,0" />
+                </StackPanel>
+
+                <!-- Quick Tip Card -->
+                <Border DockPanel.Dock="Top"
+                        Background="#1D2939"
+                        CornerRadius="8"
+                        Padding="12,10"
+                        Margin="0,0,0,18">
+                    <StackPanel>
+                        <TextBlock Text="QUICK TIP"
+                                   Foreground="#60A5FA"
+                                   FontSize="10.5"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="Double-click any table cell to copy its value."
+                                   Foreground="#D0D5DD"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   Margin="0,3,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Footer & Credentials -->
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                    <Border Background="#1D2939" CornerRadius="8" Padding="10,8" Margin="0,0,0,10">
+                        <DockPanel LastChildFill="True">
+                            <Button DockPanel.Dock="Right"
+                                    Content="Configure"
+                                    Command="{Binding ConfigureCredentialsCommand}"
+                                    Padding="10,4"
+                                    Height="26"
+                                    FontSize="11.5"
+                                    FontWeight="SemiBold"
+                                    Background="#2563EB"
+                                    Foreground="#FFFFFF"
+                                    BorderThickness="0"
+                                    Cursor="Hand" />
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock Text="CREDENTIALS"
+                                           Foreground="#98A2B3"
+                                           FontSize="10"
+                                           FontWeight="Bold" />
+                                <TextBlock Text="{Binding CredentialStatusLabel}"
+                                           Foreground="#D0D5DD"
+                                           FontSize="11.5"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding CredentialStatusLabel}" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <TextBlock Text="Secure operations workspace"
+                               Foreground="#667085"
+                               FontSize="11.5"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+
+                <!-- Workflow Sections -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <!-- 1. DATA -->
+                        <StackPanel Orientation="Horizontal" Margin="2,4,0,6">
+                            <TextBlock Text="1." Foreground="#60A5FA" FontSize="11.5" FontWeight="Bold" Margin="0,0,6,0" />
+                            <TextBlock Text="DATA" Foreground="#98A2B3" FontSize="11.5" FontWeight="Bold" />
+                        </StackPanel>
+                        <Button Content="Upload Spreadsheet"
+                                Command="{Binding UploadSpreadsheetCommand}"
+                                IsEnabled="{Binding ButtonsEnabled}"
+                                Background="#039855"
+                                Style="{StaticResource SidebarButtonStyle}" />
+                        <Button Content="Clear Workspace"
+                                Command="{Binding ClearWorkspaceCommand}"
+                                Background="#1D2939"
+                                Style="{StaticResource SidebarButtonStyle}" />
+
+                        <!-- 2. BROWSER -->
+                        <StackPanel Orientation="Horizontal" Margin="2,18,0,6">
+                            <TextBlock Text="2." Foreground="#60A5FA" FontSize="11.5" FontWeight="Bold" Margin="0,0,6,0" />
+                            <TextBlock Text="BROWSER" Foreground="#98A2B3" FontSize="11.5" FontWeight="Bold" />
+                        </StackPanel>
+                        <Button Content="Open Körber"
+                                Command="{Binding OpenKorberCommand}"
+                                IsEnabled="{Binding ButtonsEnabled}"
+                                Background="#2563EB"
+                                Style="{StaticResource SidebarButtonStyle}" />
+                        <Button Content="Close Browser"
+                                Command="{Binding CloseBrowserCommand}"
+                                IsEnabled="{Binding ButtonsEnabled}"
+                                Background="#1D2939"
+                                Style="{StaticResource SidebarButtonStyle}" />
+
+                        <!-- 3. WORKFLOWS -->
+                        <StackPanel Orientation="Horizontal" Margin="2,18,0,6">
+                            <TextBlock Text="3." Foreground="#60A5FA" FontSize="11.5" FontWeight="Bold" Margin="0,0,6,0" />
+                            <TextBlock Text="WORKFLOWS" Foreground="#98A2B3" FontSize="11.5" FontWeight="Bold" />
+                        </StackPanel>
+                        <Button Content="Run Load Audit"
+                                Command="{Binding RunLoadAuditCommand}"
+                                IsEnabled="{Binding ButtonsEnabled}"
+                                Background="#2563EB"
+                                Style="{StaticResource SidebarButtonStyle}" />
+                        <Button Content="Process Shipping"
+                                Command="{Binding ProcessShippingCommand}"
+                                IsEnabled="{Binding ButtonsEnabled}"
+                                Background="#7F56D9"
+                                Style="{StaticResource SidebarButtonStyle}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <!-- Main Workspace (#F3F6FA) -->
+        <Grid Grid.Column="1" Margin="22,18,22,18">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Top Header & Action Bar -->
+            <Border Grid.Row="0"
+                    Background="#FFFFFF"
+                    CornerRadius="10"
+                    BorderBrush="#E4E7EC"
+                    BorderThickness="1"
+                    Padding="20,16"
+                    Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="Körber AuditShip Workspace"
+                                   Foreground="#101828"
+                                   FontSize="20"
+                                   FontWeight="Bold" />
+                        <TextBlock Text="{Binding StatusText}"
+                                   Foreground="{Binding StatusBrush}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   Margin="0,4,0,0"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="Stop Automation"
+                                Command="{Binding StopAutomationCommand}"
+                                Background="#D92D20"
+                                Style="{StaticResource ToolbarButtonStyle}"
+                                Margin="0,0,8,0" />
+                        <Button Content="Export PDF"
+                                Command="{Binding ExportPdfCommand}"
+                                Background="#2563EB"
+                                Style="{StaticResource ToolbarButtonStyle}"
+                                Margin="0,0,8,0" />
+                        <Button Content="Export Excel"
+                                Command="{Binding ExportExcelCommand}"
+                                Background="#039855"
+                                Style="{StaticResource ToolbarButtonStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Operational Summary Card (#EFF4FF) -->
+            <Border Grid.Row="1"
+                    Background="#EFF4FF"
+                    BorderBrush="#C7D7FE"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="18,12"
+                    Margin="0,0,0,14">
+                <StackPanel>
+                    <TextBlock Text="OPERATIONAL SUMMARY"
+                               Foreground="#2563EB"
+                               FontSize="11"
+                               FontWeight="Bold" />
+                    <TextBlock Text="{Binding SummaryText}"
+                               Foreground="#1D2939"
+                               FontSize="13.5"
+                               FontWeight="SemiBold"
+                               Margin="0,4,0,0"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <!-- Data Table Card -->
+            <Border Grid.Row="2"
+                    Background="#FFFFFF"
+                    BorderBrush="#E4E7EC"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="18,14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Table Header & Pagination Controls -->
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Gate Pass Data"
+                                       Foreground="#101828"
+                                       FontSize="15.5"
+                                       FontWeight="Bold"
+                                       VerticalAlignment="Center" />
+                            <Border Background="#EAF2FF"
+                                    CornerRadius="12"
+                                    Padding="10,3"
+                                    Margin="12,0,0,0"
+                                    VerticalAlignment="Center">
+                                <TextBlock Text="{Binding PageInfoText}"
+                                           Foreground="#2563EB"
+                                           FontSize="12"
+                                           FontWeight="SemiBold" />
+                            </Border>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="Previous"
+                                    Command="{Binding PreviousPageCommand}"
+                                    IsEnabled="{Binding CanGoPrevious}"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Height="30"
+                                    Padding="12,0"
+                                    Margin="0,0,6,0" />
+                            <Button Content="Next"
+                                    Command="{Binding NextPageCommand}"
+                                    IsEnabled="{Binding CanGoNext}"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Height="30"
+                                    Padding="12,0"
+                                    Margin="0,0,14,0" />
+
+                            <TextBlock Text="Go to row:"
+                                       Foreground="#667085"
+                                       FontSize="12.5"
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,6,0" />
+                            <TextBox x:Name="GoToRowBox"
+                                     Text="{Binding GoToRowInput, UpdateSourceTrigger=PropertyChanged}"
+                                     Width="68"
+                                     Height="30"
+                                     VerticalContentAlignment="Center"
+                                     Padding="8,0"
+                                     BorderBrush="#D0D5DD"
+                                     BorderThickness="1"
+                                     KeyDown="GoToRowBox_KeyDown"
+                                     Margin="0,0,6,0" />
+                            <Button Content="Go"
+                                    Command="{Binding GoToRowCommand}"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Height="30"
+                                    Padding="12,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- DataGrid + Empty Overlay -->
+                    <Grid Grid.Row="1">
+                        <DataGrid x:Name="AuditDataGrid"
+                                  ItemsSource="{Binding VisibleRows}"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  CanUserReorderColumns="False"
+                                  CanUserSortColumns="False"
+                                  SelectionMode="Single"
+                                  SelectionUnit="CellOrRowHeader"
+                                  HeadersVisibility="Column"
+                                  GridLinesVisibility="Horizontal"
+                                  HorizontalGridLinesBrush="#EAECF0"
+                                  RowBackground="#FFFFFF"
+                                  AlternatingRowBackground="#F9FAFB"
+                                  BorderBrush="#EAECF0"
+                                  BorderThickness="1"
+                                  RowHeight="36"
+                                  FontSize="12.5"
+                                  Foreground="#101828"
+                                  ColumnHeaderStyle="{StaticResource KorberColumnHeaderStyle}"
+                                  CellStyle="{StaticResource KorberCellStyle}"
+                                  PreviewMouseWheel="AuditDataGrid_PreviewMouseWheel"
+                                  MouseDoubleClick="AuditDataGrid_MouseDoubleClick"
+                                  PreviewKeyDown="AuditDataGrid_PreviewKeyDown">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Wh Id" Binding="{Binding WhId}" Width="0.7*" />
+                                <DataGridTextColumn Header="Load ID" Binding="{Binding LoadId}" Width="1.15*" />
+                                <DataGridTextColumn Header="Gate Pass Id" Binding="{Binding GatePassId}" Width="1.2*" />
+                                <DataGridTextColumn Header="Door Location" Binding="{Binding DoorLocation}" Width="1.0*" />
+                                <DataGridTextColumn Header="Load Audit" Binding="{Binding LoadAuditStatus}" Width="2.0*" />
+                                <DataGridTextColumn Header="Shipping" Binding="{Binding ShippingStatus}" Width="2.0*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <!-- Empty State when no data loaded -->
+                        <Border Background="#F9FAFB"
+                                BorderBrush="#EAECF0"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasData}" Value="False">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <TextBlock Text="No spreadsheet loaded"
+                                           Foreground="#101828"
+                                           FontSize="16"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Center" />
+                                <TextBlock Text="Use 'Upload Spreadsheet' in the sidebar to import a Gate Pass .xlsx workbook."
+                                           Foreground="#667085"
+                                           FontSize="13"
+                                           Margin="0,6,0,0"
+                                           HorizontalAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- Vertical / Horizontal Page Slider -->
+                    <Grid Grid.Row="2" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="Scroll Rows:"
+                                   Foreground="#667085"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0" />
+                        <Slider Grid.Column="1"
+                                Minimum="0"
+                                Maximum="{Binding SliderMaximum}"
+                                Value="{Binding StartRow, Mode=TwoWay}"
+                                IsEnabled="{Binding IsSliderEnabled}"
+                                IsSnapToTickEnabled="True"
+                                TickFrequency="1"
+                                SmallChange="1"
+                                LargeChange="10"
+                                VerticalAlignment="Center" />
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</UserControl>

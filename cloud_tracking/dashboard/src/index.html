@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101f2c">
+  <meta name="referrer" content="no-referrer">
+  <title>Live Operators · EFL NEXUS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23101f2c'/%3E%3Cpath d='M11 29V11l18 18V11' stroke='%235bdbc1' stroke-width='4' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="login-view" class="login-shell">
+    <section class="login-intro">
+      <a class="brand" href="/"><span class="brand-mark">N</span><span>EFL NEXUS<small>OPERATIONS CONSOLE</small></span></a>
+      <div class="intro-copy"><p class="eyebrow">A CLEAR VIEW OF YOUR TEAM</p><h1>One place.<br>Every connection.</h1><p>Know which operators and devices are connected to EFL NEXUS, wherever the work happens.</p><div class="intro-signal"><span class="dot"></span> Operator presence · Device visibility</div></div>
+      <span class="intro-footer">EFL NEXUS / LIVE OPERATORS</span>
+    </section>
+    <main class="login-main">
+      <form id="login-form" class="login-card">
+        <span class="section-number">ADMIN ACCESS</span><h2>Welcome back.</h2><p>Sign in to your operations dashboard.</p>
+        <label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="254" placeholder="you@company.com">
+        <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button id="login-submit" class="button primary" type="submit">Sign in <span aria-hidden="true">↗</span></button>
+        <p id="login-error" class="error" role="alert"></p>
+        <p class="login-note">Access is limited to approved administrators.<br>Contact your project owner if you need an account.</p>
+      </form>
+    </main>
+  </div>
+
+  <div id="app-view" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark">N</span><span>EFL NEXUS<small>OPERATIONS CONSOLE</small></span></a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav aria-label="Dashboard sections">
+        <button class="nav-item active" data-view="overview" aria-current="page"><span aria-hidden="true">◉</span> Live operators <span id="nav-online" class="nav-count">—</span></button>
+        <button class="nav-item" data-view="devices"><span aria-hidden="true">▣</span> Devices</button>
+        <button class="nav-item" data-view="history"><span aria-hidden="true">◷</span> Session history</button>
+      </nav>
+      <div class="sidebar-note"><span class="small-dot"></span> Connected, with context<p>Presence reflects app connectivity. A saved KPI name identifies the selected profile.</p></div>
+      <div class="sidebar-bottom"><span class="avatar">A</span><div><strong>Administrator</strong><small id="admin-email"></small></div></div>
+    </aside>
+
+    <div class="main-shell">
+      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumb-view">Live operators</strong></div><div class="top-actions"><span id="refresh-state" class="refresh-state">Connecting…</span><button id="refresh-button" class="button subtle" type="button">↻ <span>Refresh</span></button><button id="logout-button" class="button subtle" type="button">Sign out</button></div></header>
+      <main class="content">
+        <section class="page-heading"><div><p class="eyebrow">OPERATIONS / PRESENCE</p><h1 id="page-title">Live operators<span class="title-dot"></span></h1><p id="page-description">See who’s connected, and where they’re working.</p></div><button id="enroll-button" class="button primary" type="button">＋ Enroll a device</button></section>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section id="metrics" class="metrics" aria-label="Connection totals">
+          <article class="metric"><div>Online sessions <span class="metric-icon green">◉</span></div><strong id="metric-online">—</strong><small>Connected app instances</small></article>
+          <article class="metric"><div>Named operators <span class="metric-icon">♙</span></div><strong id="metric-operators">—</strong><small>Distinct KPI names online</small></article>
+          <article class="metric"><div>Unassigned devices <span class="metric-icon amber">▣</span></div><strong id="metric-unassigned">—</strong><small>Online without a KPI profile</small></article>
+          <article class="metric"><div>Enrolled devices <span class="metric-icon">⌘</span></div><strong id="metric-enrolled">—</strong><small>Active device enrollments</small></article>
+        </section>
+
+        <section id="sessions-panel" class="panel" aria-label="Operator sessions">
+          <div class="panel-heading"><div><h2 id="table-title">Current sessions <span id="session-count" class="count-chip">0</span></h2><p id="table-description">KPI profile names, with device names as a fallback.</p></div><span class="cadence"><span class="small-dot"></span> Refreshes every 15s</span></div>
+          <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="session-search" type="search" aria-label="Search operators or devices" placeholder="Search operators, devices, or tools…"></label><select id="status-filter" aria-label="Filter session status"><option value="all">All statuses</option><option value="online">Online</option><option value="connection_lost">Connection lost</option><option value="unknown">Unknown</option><option value="closed">Closed</option><option value="revoked">Revoked</option></select></div>
+          <div class="table-scroll"><table><thead><tr><th>OPERATOR / DEVICE</th><th>STATUS</th><th>SELECTED TOOL</th><th>SESSION START</th><th>LAST CONTACT</th><th>VERSION</th></tr></thead><tbody id="sessions-body"></tbody></table></div>
+          <div id="sessions-empty" class="empty-state" hidden><span class="empty-icon">◉</span><h3>No sessions yet</h3><p>Enroll a device and open EFL NEXUS to see it here.</p></div>
+          <footer class="panel-footer"><span id="snapshot-time">Waiting for the first update</span><span>Connection timeout: 90 seconds</span></footer>
+        </section>
+
+        <section id="devices-panel" class="panel" hidden aria-label="Enrolled devices">
+          <div class="panel-heading"><div><h2>Device enrollments <span id="device-count" class="count-chip">0</span></h2><p>Each enrollment belongs to one computer and Windows account.</p></div></div>
+          <div class="table-scroll"><table><thead><tr><th>DEVICE LABEL</th><th>ENROLLMENT</th><th>CREATED</th><th>LAST CONTACT</th><th>ACTION</th></tr></thead><tbody id="devices-body"></tbody></table></div>
+          <div id="devices-empty" class="empty-state" hidden><span class="empty-icon">▣</span><h3>Your devices will appear here</h3><p>Create an enrollment code to connect your first computer.</p></div>
+        </section>
+        <p class="page-footnote">App connectivity is separate from operator activity. Lost connections can mean a closed app, interrupted network, or sleeping computer.</p>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="enroll-dialog"><form id="enroll-form"><div class="dialog-heading"><span class="section-number">DEVICE ENROLLMENT</span><button class="icon-button" type="button" data-close="enroll-dialog" aria-label="Close enrollment">×</button></div><h2>Connect a new computer.</h2><p>Create a unique enrollment for each computer and Windows account.</p><label for="device-label">Device label</label><input id="device-label" type="text" maxlength="120" required placeholder="A label you will recognize"><p id="enroll-error" class="error" role="alert"></p><button id="create-enrollment" class="button primary" type="submit">Create enrollment code</button></form><section id="enrollment-result" hidden><span class="section-number">ENROLLMENT CREATED</span><h2>Ready to connect.</h2><p>On the computer, open <strong>EFL NEXUS → Settings → Device Enrollment</strong> and paste this code.</p><label for="enrollment-code">Private enrollment code — shown once</label><textarea id="enrollment-code" rows="5" readonly spellcheck="false"></textarea><p class="credential-note">Treat this code as a password. It permits this device to report sessions. Close this window after enrollment; lost codes must be revoked and replaced.</p><div class="dialog-actions"><button id="copy-enrollment" class="button primary" type="button">Copy code</button><button class="button subtle" type="button" data-close="enroll-dialog">Done</button></div><p id="copy-status" role="status"></p></section></dialog>
+  <dialog id="revoke-dialog"><span class="section-number">DEVICE ACCESS</span><h2>Revoke this enrollment?</h2><p id="revoke-description"></p><p>Its enrollment code will stop working. Reconnecting requires a new code.</p><p id="revoke-error" class="error" role="alert"></p><div class="dialog-actions"><button id="confirm-revoke" class="button danger" type="button">Revoke enrollment</button><button class="button subtle" type="button" data-close="revoke-dialog">Cancel</button></div></dialog>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "efl-nexus-monitoring-backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "deno check --config supabase/functions/deno.json supabase/functions/device-enroll/index.ts supabase/functions/device-telemetry/index.ts supabase/functions/device-jobs/index.ts supabase/functions/admin-control/index.ts supabase/functions/device-screen-verify/index.ts supabase/functions/device-status/index.ts",
+    "test": "node --test --test-isolation=none tests/protocol.test.ts",
+    "check:sql": "node tests/check-sql.mjs",
+    "test:remote": "node --test --test-isolation=none tests/remote.test.mjs"
+  },
+  "devDependencies": { "deno": "2.9.6" }
+}

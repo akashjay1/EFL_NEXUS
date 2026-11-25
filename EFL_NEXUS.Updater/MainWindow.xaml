@@ -1,0 +1,61 @@
+<Window x:Class="EflNexus.Updater.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Update EFL Nexus"
+        Width="500"
+        Height="250"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#F8FAFC"
+        FontFamily="Segoe UI">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="HeaderText"
+                   Grid.Row="0"
+                   Text="Update to version"
+                   FontSize="16"
+                   FontWeight="Bold"
+                   Foreground="#0F172A"
+                   HorizontalAlignment="Center"
+                   Margin="0,0,0,10" />
+
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="1"
+                   Text="Preparing update..."
+                   FontSize="12"
+                   Foreground="#1E293B"
+                   HorizontalAlignment="Center" />
+
+        <ProgressBar x:Name="UpdateProgress"
+                     Grid.Row="2"
+                     Minimum="0"
+                     Maximum="100"
+                     Value="0"
+                     Height="18"
+                     Margin="0,10,0,4" />
+
+        <TextBlock x:Name="SizeText"
+                   Grid.Row="3"
+                   Text=""
+                   FontSize="12"
+                   Foreground="#6B7280"
+                   HorizontalAlignment="Center" />
+
+        <Button x:Name="CancelBtn"
+                Grid.Row="4"
+                Content="Cancel"
+                Width="96"
+                Height="28"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,15,0,5"
+                Click="CancelBtn_Click" />
+    </Grid>
+</Window>

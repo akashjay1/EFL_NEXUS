@@ -1,0 +1,193 @@
+<UserControl x:Class="EflNexus.App.Views.WhatsAppView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wfi="clr-namespace:System.Windows.Forms.Integration;assembly=WindowsFormsIntegration"
+             xmlns:views="clr-namespace:EflNexus.App.Views"
+             Background="#FAF8F2">
+    <UserControl.Resources>
+        <Style x:Key="WaTopBtn" TargetType="Button" BasedOn="{StaticResource NexusButtonBase}">
+            <Setter Property="Background" Value="#E2E8F0" />
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="12,6" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#CBD5E1" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#F1F5F9" />
+                    <Setter Property="Foreground" Value="#94A3B8" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="WaTabItemStyle" TargetType="TabItem">
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#334155" />
+            <Setter Property="Background" Value="#E2E8F0" />
+            <Setter Property="Padding" Value="14,7" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}"
+                                Margin="0,0,2,0">
+                            <ContentPresenter ContentSource="Header"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#0D1B2A" />
+                                <Setter Property="Foreground" Value="#00E5FF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Action Bar -->
+        <WrapPanel Grid.Row="0" VerticalAlignment="Center">
+            <TextBlock Text="WhatsApp"
+                       FontSize="19"
+                       FontWeight="Bold"
+                       Foreground="#0F172A"
+                       VerticalAlignment="Center"
+                       Margin="0,0,14,0" />
+            <Button Content="Open / Reconnect" Style="{StaticResource WaTopBtn}" Click="Open_Click" />
+            <Button x:Name="SelectGroupBtn" Content="Use Open Group" Style="{StaticResource WaTopBtn}" Margin="6,0,0,0" Click="SelectGroup_Click" />
+            <Button Content="Pause" Style="{StaticResource WaTopBtn}" Margin="6,0,0,0" Click="Pause_Click" />
+            <Button Content="Resume" Style="{StaticResource WaTopBtn}" Margin="6,0,0,0" Click="Resume_Click" />
+            <Button Content="Reload" Style="{StaticResource WaTopBtn}" Margin="6,0,0,0" Click="Reload_Click" />
+        </WrapPanel>
+
+        <!-- Controller Status -->
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="1"
+                   FontSize="12.5"
+                   Foreground="#0F172A"
+                   TextWrapping="Wrap"
+                   Margin="0,8,0,3" />
+
+        <!-- Selected Group -->
+        <TextBlock x:Name="GroupText"
+                   Grid.Row="2"
+                   FontSize="12.5"
+                   Foreground="#334155"
+                   TextWrapping="Wrap" />
+
+        <!-- Default GRN Warehouse Row -->
+        <WrapPanel Grid.Row="3" VerticalAlignment="Center" Margin="0,6,0,4">
+            <TextBlock Text="Default GRN warehouse for selected group"
+                       FontSize="12.5"
+                       Foreground="#0F172A"
+                       VerticalAlignment="Center" />
+            <ComboBox x:Name="GrnWarehouseCombo"
+                      Width="130"
+                      IsEditable="False"
+                      FontSize="12.5"
+                      Padding="6,4"
+                      Margin="8,0,0,0" />
+            <Button Content="Save GRN Warehouse"
+                    Style="{StaticResource WaTopBtn}"
+                    Margin="8,0,0,0"
+                    Click="SaveGrnWarehouse_Click" />
+            <TextBlock x:Name="GrnSetupStatusText"
+                       FontSize="12.5"
+                       Foreground="#0F172A"
+                       VerticalAlignment="Center"
+                       Margin="10,0,0,0" />
+        </WrapPanel>
+
+        <!-- Gap / Warning Bar -->
+        <DockPanel Grid.Row="4" Margin="0,2,0,6">
+            <Button x:Name="AckGapBtn"
+                    DockPanel.Dock="Right"
+                    Content="Gap checked"
+                    Style="{StaticResource WaTopBtn}"
+                    Visibility="Collapsed"
+                    Click="AckGap_Click" />
+            <TextBlock x:Name="GapText"
+                       Foreground="#B45309"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       VerticalAlignment="Center" />
+        </DockPanel>
+
+        <!-- Tabs -->
+        <TabControl x:Name="MainTabControl"
+                    Grid.Row="5"
+                    Background="#FFFFFF"
+                    BorderBrush="#CBD5E1"
+                    BorderThickness="1"
+                    Padding="0"
+                    ItemContainerStyle="{StaticResource WaTabItemStyle}"
+                    SelectionChanged="MainTabControl_SelectionChanged">
+            <TabItem x:Name="BrowserTab" Header="  Browser  ">
+                <Grid Background="#FAF8F2">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Text="Sign in using the QR code, open your GDN group, then choose Use Open Group. Pause before changing the monitored group."
+                               FontSize="12.5"
+                               Foreground="#0F172A"
+                               TextWrapping="Wrap"
+                               Margin="8,8,8,4" />
+
+                    <CheckBox x:Name="ImportVisibleCheck"
+                              Grid.Row="1"
+                              Content="Also import messages currently visible when selecting the group"
+                              FontSize="12.5"
+                              Foreground="#0F172A"
+                              Margin="8,0,8,6" />
+
+                    <Border Grid.Row="2" Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="0,1,0,0">
+                        <wfi:WindowsFormsHost x:Name="BrowserHostContainer"
+                                              SizeChanged="BrowserHostContainer_SizeChanged" />
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem x:Name="GdnInboxTab" Header="  GDN Inbox  ">
+                <views:WhatsAppGdnInboxControl x:Name="GdnInboxControl" />
+            </TabItem>
+
+            <TabItem x:Name="GrnInboxTab" Header="  GRN Inbox  ">
+                <views:WhatsAppGrnInboxControl x:Name="GrnInboxControl" />
+            </TabItem>
+
+            <TabItem x:Name="Lane1Tab" Header="  WhatsApp Lane 1  ">
+                <views:KorberLaneControl x:Name="Lane1Control"
+                                         ProfileName="whatsapp_lane_1"
+                                         LaneName="WhatsApp Lane 1" />
+            </TabItem>
+
+            <TabItem x:Name="Lane2Tab" Header="  WhatsApp Lane 2  ">
+                <views:KorberLaneControl x:Name="Lane2Control"
+                                         ProfileName="whatsapp_lane_2"
+                                         LaneName="WhatsApp Lane 2" />
+            </TabItem>
+        </TabControl>
+    </Grid>
+</UserControl>

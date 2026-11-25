@@ -1,0 +1,272 @@
+[
+  {
+    "package": "mingw-w64-x86_64-libarchive",
+    "filename": "mingw-w64-x86_64-libarchive-3.8.10-1-any.pkg.tar.zst",
+    "sha256": "d2fa77bf33c3c4041deea44b59f0b1800d521d86168b7a14cd6c049b659bbe1c",
+    "license": "spdx:BSD-2-Clause",
+    "upstream": "https://www.libarchive.org/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libarchive",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libb2",
+    "filename": "mingw-w64-x86_64-libb2-0.98.1-3-any.pkg.tar.zst",
+    "sha256": "3c898f08c5f19e25dc6d7e39aa36b6f323141f0e62c5c50f089cd3f89711854c",
+    "license": "custom:CC0",
+    "upstream": "https://blake2.net/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libb2",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-brotli",
+    "filename": "mingw-w64-x86_64-brotli-1.2.0-1-any.pkg.tar.zst",
+    "sha256": "f5f2f7e723a08378241d15f0537386950c1a48e2d82bc47bedd632bd61852aba",
+    "license": "spdx:MIT",
+    "upstream": "https://github.com/google/brotli",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-brotli",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-bzip2",
+    "filename": "mingw-w64-x86_64-bzip2-1.0.8-4-any.pkg.tar.zst",
+    "sha256": "123768f30ae14ba654a6feb70f8526146a331bc85f831a91a549ffb3f6cbffc7",
+    "license": "custom",
+    "upstream": "https://sourceware.org/bzip2/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-bzip2",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-curl",
+    "filename": "mingw-w64-x86_64-curl-8.23.0-1-any.pkg.tar.zst",
+    "sha256": "9633a2d2d6c71e1b4482fa596b8680cce038cca9e9f04621d4f40dea0cc9efe6",
+    "license": "spdx:MIT",
+    "upstream": "https://curl.se/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-curl",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libdeflate",
+    "filename": "mingw-w64-x86_64-libdeflate-1.26-1-any.pkg.tar.zst",
+    "sha256": "aa0d9b5e2d0413d5e01745a48ef0c8fa293172d48c13f87b61ada627ab7407ad",
+    "license": "spdx:MIT",
+    "upstream": "https://github.com/ebiggers/libdeflate",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libdeflate",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-expat",
+    "filename": "mingw-w64-x86_64-expat-2.9.0-1-any.pkg.tar.zst",
+    "sha256": "d81be70f6e22b988f00564bb16a2769347a6321964c99042d8ed8a7ed72b4829",
+    "license": "spdx:MIT",
+    "upstream": "https://libexpat.github.io/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-expat",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-gcc-libs",
+    "filename": "mingw-w64-x86_64-gcc-libs-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "e65d2da59bb22c13eafc0fb7684b0539f63902bb94a550df1d64531a6c08363a",
+    "license": "spdx:GPL-3.0-or-later WITH GCC-exception-3.1 AND GFDL-1.3-or-later",
+    "upstream": "https://gcc.gnu.org",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-gcc",
+    "notice_files": 0
+  },
+  {
+    "package": "mingw-w64-x86_64-libgcc",
+    "filename": "mingw-w64-x86_64-libgcc-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "e0815432c4225892b0eef57055fe507fa0b9a036436f046605f6629696bd1b88",
+    "license": "spdx:GPL-3.0-or-later WITH GCC-exception-3.1 AND GFDL-1.3-or-later",
+    "upstream": "https://gcc.gnu.org",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-gcc",
+    "notice_files": 2
+  },
+  {
+    "package": "mingw-w64-x86_64-libstdc++",
+    "filename": "mingw-w64-x86_64-libstdc++-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "924b47e8c3e20b6448e29d3333acc638a4f4783c1c45230e09673532f9c4f198",
+    "license": "spdx:GPL-3.0-or-later WITH GCC-exception-3.1 AND GFDL-1.3-or-later",
+    "upstream": "https://gcc.gnu.org",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-gcc",
+    "notice_files": 2
+  },
+  {
+    "package": "mingw-w64-x86_64-giflib",
+    "filename": "mingw-w64-x86_64-giflib-6.1.3-1-any.pkg.tar.zst",
+    "sha256": "bfa540ab9892bbc5161e3f81fcfb0ca71f44bd2e00478b5df79f899825c523f5",
+    "license": "spdx:MIT",
+    "upstream": "https://sourceforge.net/projects/giflib/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-giflib",
+    "notice_files": 0
+  },
+  {
+    "package": "mingw-w64-x86_64-libiconv",
+    "filename": "mingw-w64-x86_64-libiconv-1.19-1-any.pkg.tar.zst",
+    "sha256": "21e334d0911f25de75d3e18e0697648bcecfa9658256d600cad0827d719c2f35",
+    "license": "spdx:LGPL-2.1-or-later\ndocumentation:spdx:GPL-3.0-or-later",
+    "upstream": "https://www.gnu.org/software/libiconv/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libiconv",
+    "notice_files": 4
+  },
+  {
+    "package": "mingw-w64-x86_64-libidn2",
+    "filename": "mingw-w64-x86_64-libidn2-2.3.8-4-any.pkg.tar.zst",
+    "sha256": "f98a157446f9ac35465022e329cdaf6169b0c9fa19837e9d80aff9d4e5109013",
+    "license": "spdx:GPL-2.0-or-later\nspdx:LGPL-3.0-or-later",
+    "upstream": "https://www.gnu.org/software/libidn/#libidn2",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libidn2",
+    "notice_files": 0
+  },
+  {
+    "package": "mingw-w64-x86_64-gettext-runtime",
+    "filename": "mingw-w64-x86_64-gettext-runtime-1.0-1-any.pkg.tar.zst",
+    "sha256": "be68d7f260633284b910c588c6d82ee304a81c8817a686d2cd9df83f872c27af",
+    "license": "spdx:GPL-3.0-or-later AND LGPL-2.1-or-later",
+    "upstream": "https://www.gnu.org/software/gettext/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-gettext",
+    "notice_files": 4
+  },
+  {
+    "package": "mingw-w64-x86_64-jbigkit",
+    "filename": "mingw-w64-x86_64-jbigkit-2.1-6-any.pkg.tar.zst",
+    "sha256": "3db9e32abca5d208920a096e5ae01952f2d8a361780428b9646b6da6750f7321",
+    "license": "spdx:GPL-2.0",
+    "upstream": "https://www.cl.cam.ac.uk/~mgk25/jbigkit/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-jbigkit",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libjpeg-turbo",
+    "filename": "mingw-w64-x86_64-libjpeg-turbo-3.2.0-1-any.pkg.tar.zst",
+    "sha256": "ef3f55cf5238a8045c8f37796d730e4a5ee619d29ca9254aaa62456e5b5b7e51",
+    "license": "custom:BSD-like",
+    "upstream": "https://libjpeg-turbo.virtualgl.org/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libjpeg-turbo",
+    "notice_files": 4
+  },
+  {
+    "package": "mingw-w64-x86_64-leptonica",
+    "filename": "mingw-w64-x86_64-leptonica-1.87.0-2-any.pkg.tar.zst",
+    "sha256": "741e6ef13b7994dd2ce166135f32e3c6c1bc4eeb7b657242a8aaf3b479a04d7f",
+    "license": "spdx:BSD-2-Clause",
+    "upstream": "http://www.leptonica.org",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-leptonica",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-lerc",
+    "filename": "mingw-w64-x86_64-lerc-4.1.1-1-any.pkg.tar.zst",
+    "sha256": "5bc170650bc02812a7c674a5f7b8ff2781b4bfa259ab2da2264c3008e2a04c72",
+    "license": "spdx:Apache-2.0",
+    "upstream": "https://github.com/Esri/lerc",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-lerc",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-lz4",
+    "filename": "mingw-w64-x86_64-lz4-1.10.0-1-any.pkg.tar.zst",
+    "sha256": "a4c5a3bcd26111554c87591275b8a681bfa4473d1607647e24c22ef6213c055c",
+    "license": "BSD\nGPL2",
+    "upstream": "https://lz4.github.io/lz4/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-lz4",
+    "notice_files": 0
+  },
+  {
+    "package": "mingw-w64-x86_64-xz",
+    "filename": "mingw-w64-x86_64-xz-5.8.4-1-any.pkg.tar.zst",
+    "sha256": "2de0f26da60b7ff7aa192a226330d7de6b1099cb9b9f9de4145affb80146bbc8",
+    "license": "spdx:0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
+    "upstream": "https://tukaani.org/xz",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-xz",
+    "notice_files": 5
+  },
+  {
+    "package": "mingw-w64-x86_64-openjpeg2",
+    "filename": "mingw-w64-x86_64-openjpeg2-2.5.4-2-any.pkg.tar.zst",
+    "sha256": "32f8f5dc7df9f1f2d57157717136fbba431e15bc000420c953c00ffdf76ecde4",
+    "license": "spdx:BSD-2-Clause",
+    "upstream": "https://www.openjpeg.org/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-openjpeg2",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libpng",
+    "filename": "mingw-w64-x86_64-libpng-1.6.59-1-any.pkg.tar.zst",
+    "sha256": "e1830319ea6c601c1e4d146b8e78264bcbb6326f0935b82c14a9b282af2127e1",
+    "license": "custom",
+    "upstream": "http://www.libpng.org/pub/png/libpng.html",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libpng",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libpsl",
+    "filename": "mingw-w64-x86_64-libpsl-0.21.5-3-any.pkg.tar.zst",
+    "sha256": "2a86f7ce3cd3fabff7eb8e5c0d3eb1134808881a44c3838e1b518b75cb402e35",
+    "license": "spdx:MIT",
+    "upstream": "https://rockdaboot.github.io/libpsl/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libpsl",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libwebp",
+    "filename": "mingw-w64-x86_64-libwebp-1.6.0-1-any.pkg.tar.zst",
+    "sha256": "360b1690d41eb497dfe50526460a2424600a6a806cbb76c5b0fec9f14623ac59",
+    "license": "spdx:BSD-3-Clause",
+    "upstream": "https://developers.google.com/speed/webp/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libwebp",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libssh2",
+    "filename": "mingw-w64-x86_64-libssh2-1.11.1-2-any.pkg.tar.zst",
+    "sha256": "83d0b99f79e930b30eb642382662686b696d64ceb927c2606debd79cb6ff670a",
+    "license": "spdx:BSD-3-Clause",
+    "upstream": "https://libssh2.org/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libssh2",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libtiff",
+    "filename": "mingw-w64-x86_64-libtiff-4.7.2-2-any.pkg.tar.zst",
+    "sha256": "e330307e569ea912f6911d6ceae994d96ac68c27b4860c1f805ce9078439786c",
+    "license": "spdx:MIT",
+    "upstream": "https://libtiff.gitlab.io/libtiff/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libtiff",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-libunistring",
+    "filename": "mingw-w64-x86_64-libunistring-1.4.2-1-any.pkg.tar.zst",
+    "sha256": "c940cf52fb2b579baa596d3c1d911f7544cbf90f8bd19c260377aa115c65b059",
+    "license": "spdx:LGPL-3.0-or-later OR GPL-3.0-or-later",
+    "upstream": "https://www.gnu.org/software/libunistring",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-libunistring",
+    "notice_files": 2
+  },
+  {
+    "package": "mingw-w64-x86_64-zstd",
+    "filename": "mingw-w64-x86_64-zstd-1.5.7-2-any.pkg.tar.zst",
+    "sha256": "1add6705b344664f6aca108c85f79ab5bdd9e1162662bb06a4cf40a34f6e0907",
+    "license": "spdx:BSD-3-Clause OR GPL-2.0-or-later",
+    "upstream": "https://facebook.github.io/zstd/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-zstd",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-zlib",
+    "filename": "mingw-w64-x86_64-zlib-1.3.2-2-any.pkg.tar.zst",
+    "sha256": "9e75842a070ba648e986e12424e1c92c9d7d77200e85f6a34eeb600819f2e694",
+    "license": "spdx:Zlib",
+    "upstream": "https://www.zlib.net/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-zlib",
+    "notice_files": 1
+  },
+  {
+    "package": "mingw-w64-x86_64-winpthreads",
+    "filename": "mingw-w64-x86_64-winpthreads-14.0.0.r495.g63ebe6cdb-2-any.pkg.tar.zst",
+    "sha256": "32d4cbc4b4b910eb9ac42be3741c860ca9421582058b6b15c337e0bc368a37bc",
+    "license": "spdx:MIT AND BSD-3-Clause",
+    "upstream": "https://www.mingw-w64.org/",
+    "source_recipe": "https://github.com/msys2/MINGW-packages/tree/master/mingw-w64-winpthreads",
+    "notice_files": 1
+  }
+]

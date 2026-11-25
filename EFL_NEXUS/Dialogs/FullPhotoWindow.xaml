@@ -1,0 +1,50 @@
+<Window x:Class="EflNexus.App.Dialogs.FullPhotoWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GRN original photo"
+        WindowStartupLocation="CenterOwner"
+        Background="#FAF8F2">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="ControlsBar" Grid.Row="0" Margin="8,4">
+            <TextBlock x:Name="DimensionsText"
+                       VerticalAlignment="Center"
+                       HorizontalAlignment="Left"
+                       FontFamily="Segoe UI"
+                       FontSize="12"
+                       Foreground="#0F172A" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Fit" Padding="12,4" Margin="4,0" Click="Fit_Click" />
+                <Button Content="100%" Padding="12,4" Margin="4,0" Click="OneHundred_Click" />
+                <Button Content="200%" Padding="12,4" Margin="4,0" Click="TwoHundred_Click" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock x:Name="UnavailableText"
+                   Grid.Row="1"
+                   Text="Original photo is not available yet."
+                   FontFamily="Segoe UI"
+                   FontSize="13"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Margin="30"
+                   Visibility="Collapsed" />
+
+        <ScrollViewer x:Name="PhotoScroller"
+                      Grid.Row="1"
+                      Background="#333333"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Auto">
+            <Image x:Name="PhotoImage"
+                   Stretch="Fill"
+                   HorizontalAlignment="Left"
+                   VerticalAlignment="Top"
+                   RenderOptions.BitmapScalingMode="HighQuality" />
+        </ScrollViewer>
+    </Grid>
+</Window>

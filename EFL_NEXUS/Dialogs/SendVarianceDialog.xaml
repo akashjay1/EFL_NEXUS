@@ -1,0 +1,139 @@
+<Window x:Class="EflNexus.App.Dialogs.SendVarianceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Send Variance Report"
+        MinWidth="680"
+        MinHeight="620"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#FAF8F2">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock x:Name="HeaderTitle"
+                       Text="📧 Send Variance Report"
+                       FontFamily="Segoe UI"
+                       FontSize="17"
+                       FontWeight="Bold"
+                       Foreground="#0F172A" />
+            <TextBlock x:Name="HeaderSubtitle"
+                       Text="Compose and email the shipment variance report to the client's site manager via Outlook."
+                       FontFamily="Segoe UI"
+                       FontSize="12"
+                       Foreground="#64748B"
+                       Margin="0,2,0,0" />
+        </StackPanel>
+
+        <!-- Site Manager Template -->
+        <GroupBox x:Name="TemplateGroup" Grid.Row="1" Header="Site Manager Template" Padding="10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Client / Preset:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0" />
+                <ComboBox x:Name="TemplateCombo"
+                          Grid.Column="1"
+                          SelectionChanged="TemplateCombo_SelectionChanged"
+                          Margin="0,0,8,0"
+                          Padding="6,4" />
+                <Button Grid.Column="2" Content="+ Add New Preset" Padding="12,5" Click="AddPreset_Click" />
+            </Grid>
+        </GroupBox>
+
+        <!-- Recipients & Subject -->
+        <GroupBox x:Name="FieldsGroup" Grid.Row="2" Header="Recipients &amp; Subject" Padding="10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="95" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="To:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="0,3" />
+                <TextBox x:Name="ToBox" Grid.Row="0" Grid.Column="1" Padding="6,4" Margin="0,3" />
+
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="CC:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="0,3" />
+                <TextBox x:Name="CcBox" Grid.Row="1" Grid.Column="1" Padding="6,4" Margin="0,3" />
+
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="Subject:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" Margin="0,3" />
+                <TextBox x:Name="SubjectBox" Grid.Row="2" Grid.Column="1" IsReadOnly="True" Padding="6,4" Margin="0,3" />
+            </Grid>
+        </GroupBox>
+
+        <!-- Message Body -->
+        <GroupBox x:Name="BodyGroup" Grid.Row="3" Header="Message Body" Padding="10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock Text="Message Text &amp; Table:" FontFamily="Segoe UI" FontSize="12" FontWeight="Bold" VerticalAlignment="Center" HorizontalAlignment="Left" />
+                    <Button Content="⚡ Insert the Variance" HorizontalAlignment="Right" Padding="12,4" Click="InsertVariance_Click" />
+                </Grid>
+
+                <RichTextBox x:Name="BodyEditor"
+                             Grid.Row="1"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             AcceptsReturn="True"
+                             HorizontalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Auto"
+                             PreviewKeyDown="BodyEditor_PreviewKeyDown" />
+
+                <CheckBox x:Name="IncludeSignatureCheck"
+                          Grid.Row="2"
+                          Content="Include default Outlook signature"
+                          IsChecked="True"
+                          FontFamily="Segoe UI"
+                          FontSize="12"
+                          Margin="0,6,0,0" />
+            </Grid>
+        </GroupBox>
+
+        <!-- Attachments -->
+        <GroupBox x:Name="AttachGroup" Grid.Row="4" Header="📎 Attachments" Padding="10" Margin="0,0,0,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ListBox x:Name="AttachListBox" Grid.Column="0" Height="74" FontFamily="Segoe UI" FontSize="12" Margin="0,0,8,0" SelectionMode="Extended" />
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <Button Content="+ Attach Files..." Padding="10,3" Margin="0,2" Click="AttachFiles_Click" />
+                    <Button Content="Remove" Padding="10,3" Margin="0,2" Click="RemoveAttachment_Click" />
+                    <Button Content="Clear All" Padding="10,3" Margin="0,2" Click="ClearAttachments_Click" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+        <!-- Bottom Buttons -->
+        <Grid Grid.Row="5" Margin="0,4,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button x:Name="PreviewBtn" Content="👁 Preview in Outlook" Padding="14,6" Margin="0,0,8,0" Click="PreviewEmail_Click" />
+                <Button x:Name="SendBtn" Content="🚀 Send Email" Padding="14,6" Click="SendEmail_Click" />
+            </StackPanel>
+
+            <Button Content="Cancel" HorizontalAlignment="Right" Padding="14,6" Click="Cancel_Click" />
+        </Grid>
+    </Grid>
+</Window>

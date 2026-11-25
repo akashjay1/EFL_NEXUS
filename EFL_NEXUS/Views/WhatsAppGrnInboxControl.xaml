@@ -1,0 +1,246 @@
+<UserControl x:Class="EflNexus.App.Views.WhatsAppGrnInboxControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#FAF8F2">
+    <UserControl.Resources>
+        <Style x:Key="GrnPrimaryBtn" TargetType="Button" BasedOn="{StaticResource NexusButtonBase}">
+            <Setter Property="Background" Value="#0D1B2A" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="12,7" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#162E4C" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="GrnSecondaryBtn" TargetType="Button" BasedOn="{StaticResource NexusButtonBase}">
+            <Setter Property="Background" Value="#E2E8F0" />
+            <Setter Property="Foreground" Value="#0F172A" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="11,6" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#CBD5E1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Action Bar -->
+        <WrapPanel Grid.Row="0" VerticalAlignment="Center">
+            <Button Content="Scan GRN" Style="{StaticResource GrnSecondaryBtn}" Click="ImportVisible_Click" />
+            <Button Content="Retry Capture" Style="{StaticResource GrnSecondaryBtn}" Margin="6,0,0,0" Click="RetryCapture_Click" />
+            <Button Content="Clear List" Style="{StaticResource GrnSecondaryBtn}" Margin="6,0,0,0" Click="ClearList_Click" />
+            <Button Content="OCR Settings" Style="{StaticResource GrnSecondaryBtn}" Margin="6,0,0,0" Click="OcrSettings_Click" />
+            <Button Content="Retry Cloud" Style="{StaticResource GrnSecondaryBtn}" Margin="6,0,0,0" Click="RetryCloud_Click" />
+            <TextBlock Text="Scans loaded GRN photos received within the last hour."
+                       VerticalAlignment="Center"
+                       FontSize="12"
+                       Foreground="#475569"
+                       Margin="10,0,0,0" />
+        </WrapPanel>
+
+        <!-- Capture / Cloud Status -->
+        <TextBlock x:Name="CaptureStatusText"
+                   Grid.Row="1"
+                   Foreground="#B45309"
+                   FontSize="12"
+                   TextWrapping="Wrap"
+                   Margin="0,6,0,6" />
+
+        <!-- 3-Pane Workspace: Listing | Original Photo | Details -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" MinWidth="260" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="3*" MinWidth="280" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="2*" MinWidth="260" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Pane 1: Document / Source Tree -->
+            <Border Grid.Column="0" Background="#FFFFFF" BorderBrush="#CBD5E1" BorderThickness="1">
+                <DataGrid x:Name="DocumentsGrid"
+                          AutoGenerateColumns="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          HorizontalGridLinesBrush="#F1F5F9"
+                          Background="#FFFFFF"
+                          BorderThickness="0"
+                          RowHeight="26"
+                          FontSize="12"
+                          CanUserResizeRows="False"
+                          CanUserReorderColumns="False"
+                          CanUserSortColumns="False"
+                          SelectionChanged="DocumentsGrid_SelectionChanged">
+                    <DataGrid.ColumnHeaderStyle>
+                        <Style TargetType="DataGridColumnHeader">
+                            <Setter Property="Background" Value="#E5E7EB" />
+                            <Setter Property="Foreground" Value="#374151" />
+                            <Setter Property="FontWeight" Value="Bold" />
+                            <Setter Property="FontSize" Value="12" />
+                            <Setter Property="Padding" Value="8,5" />
+                            <Setter Property="BorderThickness" Value="0,0,1,1" />
+                            <Setter Property="BorderBrush" Value="#D1D5DB" />
+                        </Style>
+                    </DataGrid.ColumnHeaderStyle>
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Gate Pass" Binding="{Binding Gatepass}" Width="95" />
+                        <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="145" />
+                        <DataGridTextColumn Header="State" Binding="{Binding RunState}" Width="90" />
+                        <DataGridTextColumn Header="Received" Binding="{Binding Received}" Width="*" MinWidth="130" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" Background="Transparent" />
+
+            <!-- Pane 2: Original Photo -->
+            <Grid Grid.Column="2" Margin="6,6,6,6">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0"
+                           Text="Original photo"
+                           FontSize="14.5"
+                           FontWeight="Bold"
+                           Foreground="#0F172A" />
+
+                <Border Grid.Row="1"
+                        Background="#FFFFFF"
+                        BorderBrush="#E2E8F0"
+                        BorderThickness="1"
+                        Margin="0,8,0,8"
+                        Padding="6">
+                    <Grid>
+                        <Image x:Name="OriginalImage"
+                               Stretch="Uniform"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed" />
+                        <TextBlock x:Name="OriginalPlaceholderText"
+                                   Text="Select a photo"
+                                   Foreground="#64748B"
+                                   FontSize="12.5"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </Grid>
+                </Border>
+
+                <Button Grid.Row="2"
+                        Content="View Full Photo"
+                        HorizontalAlignment="Left"
+                        Style="{StaticResource GrnSecondaryBtn}"
+                        Click="ViewFullPhoto_Click" />
+            </Grid>
+
+            <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Center" Background="Transparent" />
+
+            <!-- Pane 3: Detected Header + Review Fields -->
+            <ScrollViewer Grid.Column="4" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="6">
+                    <TextBlock Text="Detected header"
+                               FontSize="14.5"
+                               FontWeight="Bold"
+                               Foreground="#0F172A" />
+
+                    <Border Background="#FFFFFF"
+                            BorderBrush="#E2E8F0"
+                            BorderThickness="1"
+                            MinHeight="110"
+                            MaxHeight="170"
+                            Margin="0,6,0,16"
+                            Padding="4">
+                        <Grid>
+                            <Image x:Name="CropImage"
+                                   Stretch="Uniform"
+                                   MaxHeight="160"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Visibility="Collapsed" />
+                            <TextBlock x:Name="CropPlaceholderText"
+                                       Text="Header crop appears after extraction"
+                                       Foreground="#64748B"
+                                       FontSize="12"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="Warehouse ID" FontSize="12.5" Foreground="#0F172A" />
+                    <ComboBox x:Name="WarehouseCombo"
+                              IsEditable="False"
+                              FontSize="13"
+                              Padding="6,5"
+                              Margin="0,3,0,10"
+                              SelectionChanged="WarehouseCombo_SelectionChanged" />
+
+                    <TextBlock Text="Gate Pass Number" FontSize="12.5" Foreground="#0F172A" />
+                    <TextBox x:Name="GatePassBox"
+                             FontSize="19"
+                             Padding="8,5"
+                             Background="#FFFFFF"
+                             BorderBrush="#CBD5E1"
+                             BorderThickness="1"
+                             Margin="0,3,0,10"
+                             TextChanged="GatePassBox_TextChanged" />
+
+                    <CheckBox x:Name="ConfirmedCheck"
+                              Content="I checked the number and warehouse"
+                              FontSize="12.5"
+                              Foreground="#0F172A"
+                              Margin="0,6,0,4" />
+
+                    <TextBlock x:Name="WarningsText"
+                               Text="Select a document to review."
+                               Foreground="#B45309"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="0,8,0,8" />
+
+                    <TextBlock Text="Target lane" FontSize="12.5" Foreground="#0F172A" />
+                    <ComboBox x:Name="LaneCombo"
+                              IsEditable="False"
+                              FontSize="12.5"
+                              Padding="6,5"
+                              Margin="0,3,0,10" />
+
+                    <Button Content="Save Review" Style="{StaticResource GrnSecondaryBtn}" Margin="0,0,0,6" Click="SaveReview_Click" />
+                    <Button Content="Fill GRN Form" Style="{StaticResource GrnSecondaryBtn}" Margin="0,0,0,6" Click="FillForm_Click" />
+                    <Button Content="Run Gatepass" Style="{StaticResource GrnPrimaryBtn}" Margin="0,0,0,6" Click="RunGatepass_Click" />
+                    <Button Content="Retry Extraction" Style="{StaticResource GrnSecondaryBtn}" Click="RetryExtraction_Click" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- Bottom Status -->
+        <TextBlock x:Name="StatusText"
+                   Grid.Row="3"
+                   Text="Review the photo and number before filling or running a GRN. Run Gatepass starts the selected lane's GRN flow."
+                   FontSize="12"
+                   Foreground="#334155"
+                   TextWrapping="Wrap"
+                   Margin="0,10,0,0" />
+    </Grid>
+</UserControl>

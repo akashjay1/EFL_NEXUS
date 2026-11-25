@@ -1,0 +1,37 @@
+# EFL NEXUS v1.0.9 — SPAR Packing List, Korber Integration & Enhanced Release Security
+
+### 📋 SPAR Packing List Generator
+• Built-in native SPAR Packing List generator with automated Excel processing and report generation.
+• Automated multi-file loading report parsing, custom MLP sorting, and GDN number assignment.
+• Professional Excel styling with green delivery status indicators, column borders, and summary totals.
+• Support for custom Mail Excel recipient mapping and CC email address list configuration.
+• Direct access from the main navigation sidebar and central dashboard.
+
+### 🏭 Native Körber Audit Ship Integration
+• Fully unified Körber Audit Ship module natively integrated into the main application.
+• Seamless dual-lane dispatch tracking, barcode verification, and audit scanning.
+• Direct access from sidebar navigation and dashboard — no separate application required.
+
+### 📦 Smart Job Actions (IN & OUT Workflows)
+• Context-aware download buttons tailored to specific job types:
+  - **OUT Jobs**: Integrated **Download Loading History** automation.
+  - **IN Jobs**: Integrated **Download Inventory by Gatepass** automation (Page Code: 2598).
+
+### 🛡️ Release Privacy & Data Sanitization
+• Developer credentials, tokens, and personal settings (`config.json`) are automatically stripped from release packages.
+• Default user profile sanitized with cleared `remembered_user` so author accounts are never pre-filled on new installations.
+• All WhatsApp and browser automation session profiles (`webview_profile`, `whatsapp_gdn`) are purged from release archives to guarantee WhatsApp is completely logged out on fresh installs.
+• Added `python build_release.py clean-user-data` to easily clean local test credentials and sessions before releasing.
+• Added a **WhatsApp Session (Log Out)** option directly in the Storage & Cache dialog.
+
+### 🔄 Seamless Existing-User Updates
+• Existing users updating via `updater.exe` retain their own custom settings, login credentials, and API URLs (`config.json` is preserved).
+• User accounts and password hashes (`efl_users.json`) remain intact upon updating.
+• Custom recipient templates (`templates.xlsx` and `variance_templates.xlsx`) and send logs (`sent_log.xlsx`) are preserved.
+• Existing users remain logged in to WhatsApp upon update.
+
+### ⚡ Differential Patching & Companion Updater
+• Differential patch generator (`create_patch.py`) produces lightweight hotfix packages containing only changed files.
+• Automated release notes display on startup immediately following an update (`--just-updated`).
+• Interactive on-demand release notes access by clicking the version number in the sidebar.
+• Fully compiled on .NET 9 with 0 warnings, hardware-accelerated WPF UI, and full unit test coverage.

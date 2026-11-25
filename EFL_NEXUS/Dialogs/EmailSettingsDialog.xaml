@@ -1,0 +1,86 @@
+<Window x:Class="EflNexus.App.Dialogs.EmailSettingsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings"
+        Width="560"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#FAF8F2">
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                   Text="Google Sheets Settings"
+                   FontFamily="Segoe UI"
+                   FontSize="16"
+                   FontWeight="Bold"
+                   Foreground="#0F172A"
+                   Margin="0,0,0,12" />
+
+        <TextBlock Grid.Row="1" Grid.Column="0"
+                   Text="Web App URL:"
+                   FontFamily="Segoe UI"
+                   FontSize="12"
+                   Foreground="#0F172A"
+                   VerticalAlignment="Center"
+                   Margin="0,6,16,6" />
+        <TextBox x:Name="WebAppEntry"
+                 Grid.Row="1" Grid.Column="1"
+                 FontFamily="Segoe UI"
+                 FontSize="12"
+                 Padding="6,5"
+                 Margin="0,6" />
+
+        <TextBlock Grid.Row="2" Grid.Column="0"
+                   Text="Google Sheet URL:"
+                   FontFamily="Segoe UI"
+                   FontSize="12"
+                   Foreground="#0F172A"
+                   VerticalAlignment="Center"
+                   Margin="0,6,16,6" />
+        <TextBox x:Name="SheetEntry"
+                 Grid.Row="2" Grid.Column="1"
+                 FontFamily="Segoe UI"
+                 FontSize="12"
+                 Padding="6,5"
+                 Margin="0,6" />
+
+        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Center"
+                    Margin="0,16,0,0">
+            <Button Content="Save Settings"
+                    Click="Save_Click"
+                    Padding="16,7"
+                    Margin="6,0"
+                    FontFamily="Segoe UI"
+                    FontSize="12"
+                    FontWeight="Bold"
+                    Foreground="#FFFFFF"
+                    Background="#00B7FF"
+                    BorderThickness="0"
+                    Cursor="Hand" />
+            <Button Content="Cancel"
+                    Click="Cancel_Click"
+                    Padding="16,7"
+                    Margin="6,0"
+                    FontFamily="Segoe UI"
+                    FontSize="12"
+                    FontWeight="Bold"
+                    Foreground="#0F172A"
+                    Background="#E2E8F0"
+                    BorderThickness="0"
+                    Cursor="Hand" />
+        </StackPanel>
+    </Grid>
+</Window>

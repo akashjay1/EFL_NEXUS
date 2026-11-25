@@ -1,0 +1,329 @@
+<UserControl x:Class="EflNexus.App.Views.PackingListView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="650" d:DesignWidth="1100"
+             Background="#FAF8F2">
+
+    <UserControl.Resources>
+        <!-- Flat colored button style for table actions -->
+        <Style x:Key="ActionButtonStyle" TargetType="Button">
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.75" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <!-- Top Controls Bar -->
+            <RowDefinition Height="Auto" />
+            <!-- Notification Banner -->
+            <RowDefinition Height="Auto" />
+            <!-- Table Header & Content -->
+            <RowDefinition Height="*" />
+            <!-- Bottom Status Bar -->
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Top Controls Bar -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="📋" FontSize="20" Margin="0,0,8,0" VerticalAlignment="Center" />
+                <TextBlock Text="SPAR Packing List Generator"
+                           FontFamily="Segoe UI"
+                           FontSize="20"
+                           FontWeight="Bold"
+                           Foreground="#0F172A"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- Action Buttons packed on the right -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Upload Mail Excel -->
+                <Button x:Name="UploadMailBtn"
+                        Content="Upload Mail Excel"
+                        Background="#F39C12"
+                        Foreground="#FFFFFF"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Padding="14,7"
+                        Margin="0,0,10,0"
+                        Click="UploadMailBtn_Click" />
+
+                <!-- Upload File -->
+                <Button x:Name="UploadFileBtn"
+                        Content="Upload File"
+                        Background="#2ECC71"
+                        Foreground="#FFFFFF"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Padding="14,7"
+                        Margin="0,0,10,0"
+                        Click="UploadFileBtn_Click" />
+
+                <!-- Run Task -->
+                <Button x:Name="RunBtn"
+                        Content="Run"
+                        Background="#3498DB"
+                        Foreground="#FFFFFF"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Padding="16,7"
+                        Margin="0,0,10,0"
+                        Click="RunBtn_Click" />
+
+                <!-- Clear -->
+                <Button x:Name="ClearBtn"
+                        Content="Clear"
+                        Background="#E74C3C"
+                        Foreground="#FFFFFF"
+                        Style="{StaticResource ActionButtonStyle}"
+                        Padding="14,7"
+                        Click="ClearBtn_Click" />
+            </StackPanel>
+        </Grid>
+
+        <!-- Notification Banner -->
+        <Border x:Name="NotificationBorder"
+                Grid.Row="1"
+                Background="#EBF8FF"
+                BorderBrush="#3182CE"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="12,6"
+                Margin="0,0,0,10"
+                Visibility="Collapsed">
+            <TextBlock x:Name="NotificationText"
+                       Text=""
+                       FontFamily="Segoe UI"
+                       FontSize="13"
+                       FontWeight="SemiBold"
+                       Foreground="#2B6CB0" />
+        </Border>
+
+        <!-- Main Card with DataGrid -->
+        <Border Grid.Row="2"
+                Background="#FFFFFF"
+                BorderBrush="#E2E8F0"
+                BorderThickness="1"
+                CornerRadius="6"
+                Padding="12">
+            <DataGrid x:Name="LocationDataGrid"
+                      AutoGenerateColumns="False"
+                      CanUserAddRows="False"
+                      CanUserDeleteRows="False"
+                      CanUserSortColumns="True"
+                      IsReadOnly="False"
+                      SelectionMode="Single"
+                      SelectionUnit="FullRow"
+                      GridLinesVisibility="Horizontal"
+                      HorizontalGridLinesBrush="#E2E8F0"
+                      Background="Transparent"
+                      RowBackground="#FFFFFF"
+                      AlternatingRowBackground="#F8FAFC"
+                      BorderThickness="0"
+                      FontFamily="Segoe UI"
+                      FontSize="13"
+                      RowHeight="42"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Auto">
+
+                <DataGrid.ColumnHeaderStyle>
+                    <Style TargetType="DataGridColumnHeader">
+                        <Setter Property="Background" Value="#F1F5F9" />
+                        <Setter Property="Foreground" Value="#0F172A" />
+                        <Setter Property="FontWeight" Value="Bold" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="Padding" Value="10,8" />
+                        <Setter Property="BorderThickness" Value="0,0,1,1" />
+                        <Setter Property="BorderBrush" Value="#E2E8F0" />
+                    </Style>
+                </DataGrid.ColumnHeaderStyle>
+
+                <DataGrid.Columns>
+                    <!-- Delivery Location with Green Dot Indicator -->
+                    <DataGridTemplateColumn Header="Delivery Location" Width="220" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                                    <TextBlock Text="{Binding StatusDot}"
+                                               Foreground="#2ECC71"
+                                               FontSize="15"
+                                               FontWeight="Bold"
+                                               Width="18"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Location}"
+                                               FontWeight="SemiBold"
+                                               Foreground="#0F172A"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- GDN Date -->
+                    <DataGridTemplateColumn Header="GDN Date" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding GdnDate, UpdateSourceTrigger=PropertyChanged}"
+                                         TextAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         Height="28"
+                                         Padding="4,2"
+                                         Margin="4,0"
+                                         BorderBrush="#CBD5E1" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- GDN Number -->
+                    <DataGridTemplateColumn Header="GDN Number" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding GdnNumber, UpdateSourceTrigger=PropertyChanged}"
+                                         TextAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         Height="28"
+                                         Padding="4,2"
+                                         Margin="4,0"
+                                         BorderBrush="#CBD5E1" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Vehicle Number -->
+                    <DataGridTemplateColumn Header="Vehicle Number" Width="120">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBox Text="{Binding VehicleNumber, UpdateSourceTrigger=PropertyChanged}"
+                                         TextAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         Height="28"
+                                         Padding="4,2"
+                                         Margin="4,0"
+                                         BorderBrush="#CBD5E1" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Quantity -->
+                    <DataGridTemplateColumn Header="Quantity" Width="90" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding TotalQty, StringFormat='{}{0:N0}'}"
+                                           FontWeight="Bold"
+                                           Foreground="#0F172A"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Attached GDN PDF -->
+                    <DataGridTemplateColumn Header="GDN PDF" Width="140" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding AttachedPdfName}"
+                                           TextTrimming="CharacterEllipsis"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Foreground="#475569"
+                                           ToolTip="{Binding AttachedPdfPath}" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+
+                    <!-- Action Buttons: Save, PDF, Mail -->
+                    <DataGridTemplateColumn Header="Actions" Width="*" MinWidth="220" IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <Button Content="Save"
+                                            Background="#8E44AD"
+                                            Foreground="#FFFFFF"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            Padding="12,5"
+                                            Margin="3,0"
+                                            Click="SaveRowBtn_Click"
+                                            ToolTip="Export Excel Packing List for this location" />
+
+                                    <Button Content="PDF"
+                                            Background="#16A085"
+                                            Foreground="#FFFFFF"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            Padding="12,5"
+                                            Margin="3,0"
+                                            Click="PdfRowBtn_Click"
+                                            ToolTip="Attach GDN PDF document" />
+
+                                    <Button Content="Mail"
+                                            Background="#D35400"
+                                            Foreground="#FFFFFF"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            Padding="12,5"
+                                            Margin="3,0"
+                                            Click="MailRowBtn_Click"
+                                            ToolTip="Draft Outlook email with Packing List &amp; PDF attached" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+
+        <!-- Bottom Status Bar -->
+        <Grid Grid.Row="3" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock x:Name="StatusLabel"
+                       Text="No files selected"
+                       FontFamily="Segoe UI"
+                       FontSize="13"
+                       Foreground="#64748B"
+                       VerticalAlignment="Center" />
+
+            <TextBlock x:Name="MailExcelStatus"
+                       Grid.Column="1"
+                       Text=""
+                       FontFamily="Segoe UI"
+                       FontSize="12"
+                       Foreground="#0284C7"
+                       VerticalAlignment="Center" />
+        </Grid>
+    </Grid>
+</UserControl>

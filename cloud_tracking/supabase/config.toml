@@ -1,0 +1,35 @@
+project_id = "efl-nexus-monitoring"
+
+# Local configuration. Remote Auth settings must also be verified before onboarding.
+[auth]
+enable_signup = false
+enable_anonymous_sign_ins = false
+jwt_expiry = 600
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[functions.device-enroll]
+verify_jwt = false
+entrypoint = "./functions/device-enroll/index.ts"
+
+[functions.device-telemetry]
+verify_jwt = false
+entrypoint = "./functions/device-telemetry/index.ts"
+
+[functions.admin-control]
+verify_jwt = true
+entrypoint = "./functions/admin-control/index.ts"
+
+[functions.device-jobs]
+verify_jwt = false
+entrypoint = "./functions/device-jobs/index.ts"
+
+[functions.device-screen-verify]
+verify_jwt = false
+entrypoint = "./functions/device-screen-verify/index.ts"
+
+[functions.device-status]
+verify_jwt = false
+entrypoint = "./functions/device-status/index.ts"

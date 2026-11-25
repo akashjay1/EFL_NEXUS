@@ -1,0 +1,86 @@
+<Window x:Class="KorberAuditShip.Views.PromptDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Input"
+        Width="420"
+        Height="190"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="#F3F6FA"
+        ShowInTaskbar="False">
+    <Border Margin="10"
+            Background="#FFFFFF"
+            BorderBrush="#EAF2FF"
+            BorderThickness="1"
+            CornerRadius="12"
+            Padding="14">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock x:Name="PromptLabel"
+                       Grid.Row="0"
+                       FontFamily="Segoe UI"
+                       FontSize="14"
+                       FontWeight="Bold"
+                       Foreground="#101828"
+                       Margin="0,0,0,10" />
+
+            <TextBox x:Name="InputTextBox"
+                     Grid.Row="1"
+                     Height="36"
+                     FontFamily="Segoe UI"
+                     FontSize="15"
+                     Padding="10,5"
+                     VerticalContentAlignment="Center"
+                     BorderBrush="#CBD5E1"
+                     BorderThickness="1"
+                     KeyDown="InputTextBox_KeyDown" />
+
+            <StackPanel Grid.Row="3"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,12,0,0">
+                <Button Content="Cancel"
+                        Width="92"
+                        Height="34"
+                        Margin="0,0,8,0"
+                        Background="#64748B"
+                        Foreground="White"
+                        FontFamily="Segoe UI"
+                        FontSize="12"
+                        FontWeight="Bold"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Click="CancelButton_Click">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="8" />
+                        </Style>
+                    </Button.Resources>
+                </Button>
+                <Button Content="OK"
+                        Width="92"
+                        Height="34"
+                        Background="#2563EB"
+                        Foreground="White"
+                        FontFamily="Segoe UI"
+                        FontSize="12"
+                        FontWeight="Bold"
+                        BorderThickness="0"
+                        Cursor="Hand"
+                        Click="OkButton_Click">
+                    <Button.Resources>
+                        <Style TargetType="Border">
+                            <Setter Property="CornerRadius" Value="8" />
+                        </Style>
+                    </Button.Resources>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>
